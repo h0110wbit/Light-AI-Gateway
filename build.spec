@@ -16,12 +16,14 @@ src_modules = [
     'src.core',
     'src.core.proxy',
     'src.core.server',
+    'src.core.autostart',
     'src.gui',
     'src.gui.app',
     'src.gui.main_frame',
     'src.gui.controller',
     'src.gui.theme',
     'src.gui.widgets',
+    'src.gui.tray',
     'src.gui.panels',
     'src.gui.panels.dashboard',
     'src.gui.panels.channels',
@@ -87,6 +89,9 @@ for pkg in ('uvicorn', 'fastapi'):
         datas += collect_data_files(pkg)
     except Exception:
         pass
+
+# Include resources directory (icon, etc.)
+datas.append(('resources', 'resources'))
 
 # ── 4. Analysis ───────────────────────────────────────────────────────────────
 a = Analysis(

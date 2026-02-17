@@ -4,7 +4,29 @@ Provides minimize-to-tray functionality and quick controls
 """
 import wx
 import wx.adv
+import os
+import sys
 from src.gui.theme import ACCENT, SUCCESS, TEXT_MUTED
+
+
+def get_icon_path() -> str:
+    """
+    Get the path to the application icon file.
+    Handles both source mode and compiled EXE mode (including PyInstaller onefile).
+    """
+    if getattr(sys, 'frozen', False):
+        # Running as compiled EXE
+        # PyInstaller extracts resources to sys._MEIPASS for onefile mode
+        if hasattr(sys, '_MEIPASS'):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(sys.executable)
+    else:
+        # Running from source - project root is parent of src
+        base_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    return os.path.join(base_dir, "resources", "icon.ico")
 
 
 class SystemTrayIcon(wx.adv.TaskBarIcon):
@@ -17,6 +39,7 @@ class SystemTrayIcon(wx.adv.TaskBarIcon):
         super().__init__()
         self.frame = frame
         self.controller = controller
+        self._icon_path = get_icon_path()
 
         # Create icon
         self._create_icon()
@@ -25,23 +48,34 @@ class SystemTrayIcon(wx.adv.TaskBarIcon):
         self.Bind(wx.adv.EVT_TASKBAR_LEFT_DOWN, self._on_left_click)
 
     def _create_icon(self):
-        """Create the tray icon bitmap"""
-        # Create a simple icon using a bitmap
+        """Create the tray icon from icon file"""
+        icon = self._load_icon()
+        self.SetIcon(icon, "AI Gateway")
+
+    def _load_icon(self, size: int = 16) -> wx.Icon:
+        """Load icon from file, fallback to generated icon if not found"""
+        if os.path.exists(self._icon_path):
+            # Load from file
+            img = wx.Image(self._icon_path, wx.BITMAP_TYPE_ICO)
+            if img.IsOk():
+                # Scale to appropriate size for tray
+                img = img.Scale(size, size, wx.IMAGE_QUALITY_HIGH)
+                return wx.Icon(img.ConvertToBitmap())
+
+        # Fallback: create a simple icon
+        return self._create_fallback_icon()
+
+    def _create_fallback_icon(self) -> wx.Icon:
+        """Create a simple fallback icon if icon file is not found"""
         bmp = wx.Bitmap(16, 16)
         dc = wx.MemoryDC(bmp)
         dc.SetBackground(wx.Brush(wx.Colour(18, 18, 24)))
         dc.Clear()
-
-        # Draw a simple circle/dot
         dc.SetBrush(wx.Brush(ACCENT))
         dc.SetPen(wx.Pen(ACCENT))
         dc.DrawCircle(8, 8, 6)
-
         dc.SelectObject(wx.NullBitmap)
-
-        # Set the icon
-        icon = wx.Icon(bmp)
-        self.SetIcon(icon, "AI Gateway")
+        return wx.Icon(bmp)
 
     def _on_left_click(self, event):
         """Handle left click on tray icon - show/hide window"""
@@ -117,20 +151,6 @@ class SystemTrayIcon(wx.adv.TaskBarIcon):
         self.frame.Close()
 
     def update_icon_status(self, running: bool):
-        """Update the tray icon to reflect server status"""
-        bmp = wx.Bitmap(16, 16)
-        dc = wx.MemoryDC(bmp)
-        dc.SetBackground(wx.Brush(wx.Colour(18, 18, 24)))
-        dc.Clear()
-
-        # Draw circle with status color
-        color = SUCCESS if running else TEXT_MUTED
-        dc.SetBrush(wx.Brush(color))
-        dc.SetPen(wx.Pen(color))
-        dc.DrawCircle(8, 8, 6)
-
-        dc.SelectObject(wx.NullBitmap)
-
-        icon = wx.Icon(bmp)
+        """Update the tray icon tooltip to reflect server status"""
         status = "Running" if running else "Stopped"
-        self.SetIcon(icon, f"AI Gateway - {status}")
+        self.SetIcon(self._load_icon(), f"AI Gateway - {status}")
