@@ -11,6 +11,7 @@ from src.gui.panels.dashboard import DashboardPanel
 from src.gui.panels.channels import ChannelsPanel
 from src.gui.panels.tokens import TokensPanel
 from src.gui.panels.settings import SettingsPanel
+from src.gui.tray import SystemTrayIcon
 
 NAV_ITEMS = [
     ("🏠", "Dashboard", "dashboard"),
@@ -194,7 +195,11 @@ class Sidebar(wx.Panel):
 class MainFrame(wx.Frame):
     """Main application window"""
 
-    def __init__(self, parent, title: str):
+    def __init__(self,
+                 parent,
+                 title: str,
+                 silent: bool = False,
+                 auto_start: bool = False):
         super().__init__(
             parent,
             title=title,
@@ -205,12 +210,24 @@ class MainFrame(wx.Frame):
         self.SetBackgroundColour(BG_DARK)
         self.SetMinSize((800, 580))
 
+        # Track if we should really close (vs hide to tray)
+        self._really_close = False
+
+        # Silent mode flag
+        self._silent = silent
+
         # Initialize controller
         self.controller = GatewayController()
+
+        # Create system tray icon
+        self.tray_icon = SystemTrayIcon(self, self.controller)
 
         self._build_ui()
         self._bind_controller()
         self._update_stats()
+
+        # Sync auto-start state on Windows
+        self.controller.sync_auto_start_state()
 
         self.Centre()
 
@@ -222,7 +239,15 @@ class MainFrame(wx.Frame):
         self.dashboard.log(
             f"Listening on {self.controller.get_config().settings.host}:{self.controller.get_config().settings.port}",
             "info")
-        self.dashboard.log("Ready. Click 'Start Gateway' to begin.", "info")
+
+        # Auto-start server if requested (for silent mode)
+        if auto_start or silent:
+            self.controller.start_server()
+            self.dashboard.log("Gateway auto-started", "success")
+
+        if not silent:
+            self.dashboard.log("Ready. Click 'Start Gateway' to begin.",
+                               "info")
 
     def _build_ui(self):
         # Main horizontal layout: sidebar + content
@@ -264,6 +289,9 @@ class MainFrame(wx.Frame):
 
         # Show only dashboard initially
         self._show_panel("dashboard")
+
+        # Bind close event
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
 
     def _bind_controller(self):
         """Bind controller callbacks"""
@@ -308,6 +336,9 @@ class MainFrame(wx.Frame):
             self.dashboard.set_running(False)
             self.sidebar.set_server_status(False)
 
+        # Update tray icon status
+        self.tray_icon.update_icon_status(running)
+
     def _on_config_changed(self, config):
         """Handle configuration changes"""
         self._update_stats()
@@ -321,3 +352,22 @@ class MainFrame(wx.Frame):
         stats = self.controller.get_stats()
         self.dashboard.update_stats(stats["channels"], stats["tokens"],
                                     stats["models"])
+
+    def OnClose(self, event):
+        """Handle window close - minimize to tray instead of closing"""
+        if self._really_close:
+            # Really close the application
+            if self.controller.is_running():
+                self.controller.stop_server()
+            self.tray_icon.RemoveIcon()
+            self.tray_icon.Destroy()
+            event.Skip()
+        else:
+            # Hide to tray
+            self.Hide()
+
+    def ShowWindow(self):
+        """Show and raise the window"""
+        self.Show()
+        self.Raise()
+        self.Iconize(False)

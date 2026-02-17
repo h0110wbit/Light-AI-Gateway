@@ -1,0 +1,55 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f093fb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f5576c;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#mainGradient)"/>
+  
+  <!-- Gateway symbol - interconnected nodes -->
+  <!-- Center node (the gateway) -->
+  <circle cx="256" cy="256" r="45" fill="white" opacity="0.95"/>
+  <circle cx="256" cy="256" r="35" fill="url(#accentGradient)"/>
+  
+  <!-- Top node (Anthropic) -->
+  <circle cx="256" cy="120" r="28" fill="white" opacity="0.9"/>
+  <line x1="256" y1="148" x2="256" y2="221" stroke="white" stroke-width="6" opacity="0.8"/>
+  
+  <!-- Top-right node (OpenAI) -->
+  <circle cx="370" cy="180" r="28" fill="white" opacity="0.9"/>
+  <line x1="350" y1="198" x2="280" y2="238" stroke="white" stroke-width="6" opacity="0.8"/>
+  
+  <!-- Bottom-right node (Gemini) -->
+  <circle cx="370" cy="332" r="28" fill="white" opacity="0.9"/>
+  <line x1="350" y1="314" x2="280" y2="274" stroke="white" stroke-width="6" opacity="0.8"/>
+  
+  <!-- Bottom node (Ollama) -->
+  <circle cx="256" cy="392" r="28" fill="white" opacity="0.9"/>
+  <line x1="256" y1="364" x2="256" y2="291" stroke="white" stroke-width="6" opacity="0.8"/>
+  
+  <!-- Bottom-left node (Custom) -->
+  <circle cx="142" cy="332" r="28" fill="white" opacity="0.9"/>
+  <line x1="162" y1="314" x2="232" y2="274" stroke="white" stroke-width="6" opacity="0.8"/>
+  
+  <!-- Top-left node -->
+  <circle cx="142" cy="180" r="28" fill="white" opacity="0.9"/>
+  <line x1="162" y1="198" x2="232" y2="238" stroke="white" stroke-width="6" opacity="0.8"/>
+  
+  <!-- Lightning bolt in center (fast/lightweight) -->
+  <path d="M 266 235 L 256 256 L 263 256 L 253 277 L 266 256 L 259 256 Z" 
+        fill="white" opacity="0.9" filter="url(#glow)"/>
+</svg>

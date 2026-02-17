@@ -3,6 +3,7 @@ Settings panel
 """
 import wx
 import wx.lib.scrolledpanel as scrolled
+import sys
 from src.gui.theme import *
 from src.gui.widgets import *
 
@@ -204,6 +205,33 @@ class SettingsPanel(wx.Panel):
         form.Add(cors_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
                  PADDING_MD)
 
+        form.Add(Divider(scroll), 0,
+                 wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, PADDING_MD)
+
+        # ── System section ───────────────────────────────────────────────────
+        self._add_section_label(scroll, form, "SYSTEM")
+
+        # Auto-start checkbox (Windows only)
+        if sys.platform == "win32":
+            self.auto_start_check = wx.CheckBox(
+                scroll, label="Start with Windows (auto-start on login)")
+            self.auto_start_check.SetValue(False)
+            self.auto_start_check.SetFont(make_font(9))
+            self.auto_start_check.SetForegroundColour(TEXT_PRIMARY)
+            self.auto_start_check.SetBackgroundColour(BG_PANEL)
+            form.Add(self.auto_start_check, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM,
+                     PADDING_MD)
+
+            auto_start_hint = wx.StaticText(
+                scroll,
+                label=
+                "When enabled, AI Gateway will start automatically when you log in to Windows"
+            )
+            auto_start_hint.SetFont(make_font(8))
+            auto_start_hint.SetForegroundColour(TEXT_MUTED)
+            auto_start_hint.SetBackgroundColour(BG_PANEL)
+            form.Add(auto_start_hint, 0, wx.LEFT | wx.BOTTOM, PADDING_MD)
+
         # Spacer at bottom
         form.AddSpacer(PADDING_LG)
 
@@ -263,6 +291,10 @@ class SettingsPanel(wx.Panel):
         self.cors_check.SetValue(s.enable_cors)
         self.cors_origins_ctrl.SetValue(", ".join(s.cors_origins))
 
+        # Auto-start (Windows only)
+        if sys.platform == "win32" and hasattr(self, 'auto_start_check'):
+            self.auto_start_check.SetValue(s.auto_start)
+
     def on_save(self, event):
         cors_str = self.cors_origins_ctrl.GetValue().strip()
         cors_origins = [o.strip()
@@ -272,14 +304,25 @@ class SettingsPanel(wx.Panel):
         log_level = log_levels[self.log_level.GetSelection()]
 
         settings_data = {
-            "host": self.host_ctrl.GetValue().strip() or "0.0.0.0",
-            "port": self.port_spin.GetValue(),
-            "log_level": log_level,
-            "require_auth": self.require_auth_check.GetValue(),
-            "default_timeout": self.timeout_spin.GetValue(),
-            "enable_fallback": self.fallback_check.GetValue(),
-            "enable_cors": self.cors_check.GetValue(),
-            "cors_origins": cors_origins,
+            "host":
+            self.host_ctrl.GetValue().strip() or "0.0.0.0",
+            "port":
+            self.port_spin.GetValue(),
+            "log_level":
+            log_level,
+            "require_auth":
+            self.require_auth_check.GetValue(),
+            "default_timeout":
+            self.timeout_spin.GetValue(),
+            "enable_fallback":
+            self.fallback_check.GetValue(),
+            "enable_cors":
+            self.cors_check.GetValue(),
+            "cors_origins":
+            cors_origins,
+            "auto_start":
+            self.auto_start_check.GetValue() if sys.platform == "win32"
+            and hasattr(self, 'auto_start_check') else False,
         }
 
         self.controller.update_settings(settings_data)
@@ -302,3 +345,5 @@ class SettingsPanel(wx.Panel):
             self.fallback_check.SetValue(defaults.enable_fallback)
             self.cors_check.SetValue(defaults.enable_cors)
             self.cors_origins_ctrl.SetValue("*")
+            if sys.platform == "win32" and hasattr(self, 'auto_start_check'):
+                self.auto_start_check.SetValue(defaults.auto_start)
