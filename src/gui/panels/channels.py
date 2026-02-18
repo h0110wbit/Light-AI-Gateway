@@ -23,7 +23,7 @@ def dip_size(window: wx.Window, width: int, height: int) -> tuple:
 
 CHANNEL_TYPES = ["openai", "anthropic", "gemini", "ollama", "custom"]
 DEFAULT_URLS = {
-    "openai": "https://api.openai.com",
+    "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "gemini": "https://generativelanguage.googleapis.com",
     "ollama": "http://localhost:11434",
@@ -38,7 +38,7 @@ class ChannelDialog(wx.Dialog):
         title = "Edit Channel" if channel else "Add Channel"
         super().__init__(parent,
                          title=title,
-                         size=dip_size(parent, 520, 560),
+                         size=dip_size(parent, 520, 680),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.channel = channel
         self.SetBackgroundColour(BG_PANEL)
@@ -166,12 +166,46 @@ class ChannelDialog(wx.Dialog):
         self.enabled_check.SetBackgroundColour(BG_PANEL)
         form.Add(self.enabled_check, 0, wx.ALL, PADDING_MD)
 
+        # Proxy settings section
+        proxy_section = wx.Panel(scroll)
+        proxy_section.SetBackgroundColour(BG_PANEL)
+        proxy_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        proxy_header = wx.StaticText(proxy_section, label="PROXY SETTINGS")
+        proxy_header.SetFont(make_font(8, bold=True))
+        proxy_header.SetForegroundColour(TEXT_SECONDARY)
+        proxy_sizer.Add(proxy_header, 0, wx.BOTTOM, 4)
+
+        # Proxy enabled checkbox
+        self.proxy_enabled_check = wx.CheckBox(proxy_section,
+                                               label="Enable Proxy")
+        self.proxy_enabled_check.SetValue(False)
+        self.proxy_enabled_check.SetFont(make_font(9))
+        self.proxy_enabled_check.SetForegroundColour(TEXT_PRIMARY)
+        self.proxy_enabled_check.SetBackgroundColour(BG_PANEL)
+        proxy_sizer.Add(self.proxy_enabled_check, 0, wx.BOTTOM, 4)
+
+        # Proxy URL input
+        self.proxy_input = LabeledInput(
+            proxy_section,
+            "Proxy URL (http://host:port or socks5://host:port)",
+            "http://127.0.0.1:7890")
+        self.proxy_input.Enable(False)
+        proxy_sizer.Add(self.proxy_input, 0, wx.EXPAND)
+
+        proxy_section.SetSizer(proxy_sizer)
+        form.Add(proxy_section, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+                 PADDING_MD)
+
         scroll.SetSizer(form)
         scroll.SetupScrolling()
         sizer.Add(scroll, 1, wx.EXPAND)
 
         # Update URL on type change
         self.type_choice.Bind(wx.EVT_CHOICE, self._on_type_change)
+
+        # Proxy enabled toggle
+        self.proxy_enabled_check.Bind(wx.EVT_CHECKBOX, self._on_proxy_toggle)
 
         # Buttons
         sizer.Add(Divider(self), 0, wx.EXPAND | wx.TOP, PADDING_MD)
@@ -206,6 +240,11 @@ class ChannelDialog(wx.Dialog):
             if not current_url or current_url in DEFAULT_URLS.values():
                 self.url_input.SetValue(DEFAULT_URLS.get(type_key, ""))
 
+    def _on_proxy_toggle(self, event):
+        """Enable/disable proxy URL input based on checkbox state"""
+        enabled = self.proxy_enabled_check.GetValue()
+        self.proxy_input.Enable(enabled)
+
     def _load_channel(self, ch: ChannelConfig):
         self.name_input.SetValue(ch.name)
         try:
@@ -219,6 +258,10 @@ class ChannelDialog(wx.Dialog):
         self.priority_spin.SetValue(ch.priority)
         self.timeout_spin.SetValue(ch.timeout)
         self.enabled_check.SetValue(ch.enabled)
+        self.proxy_enabled_check.SetValue(ch.proxy_enabled)
+        self.proxy_input.Enable(ch.proxy_enabled)
+        if ch.proxy_url:
+            self.proxy_input.SetValue(ch.proxy_url)
 
     def _on_save(self, event):
         if not self.name_input.GetValue().strip():
@@ -237,14 +280,27 @@ class ChannelDialog(wx.Dialog):
                   if m.strip()] if models_str else []
 
         return {
-            "name": self.name_input.GetValue().strip(),
-            "type": CHANNEL_TYPES[self.type_choice.GetSelection()],
-            "base_url": self.url_input.GetValue().strip(),
-            "api_key": self.key_input.GetValue(),
-            "models": models,
-            "priority": self.priority_spin.GetValue(),
-            "timeout": self.timeout_spin.GetValue(),
-            "enabled": self.enabled_check.GetValue(),
+            "name":
+            self.name_input.GetValue().strip(),
+            "type":
+            CHANNEL_TYPES[self.type_choice.GetSelection()],
+            "base_url":
+            self.url_input.GetValue().strip(),
+            "api_key":
+            self.key_input.GetValue(),
+            "models":
+            models,
+            "priority":
+            self.priority_spin.GetValue(),
+            "timeout":
+            self.timeout_spin.GetValue(),
+            "enabled":
+            self.enabled_check.GetValue(),
+            "proxy_enabled":
+            self.proxy_enabled_check.GetValue(),
+            "proxy_url":
+            self.proxy_input.GetValue().strip()
+            if self.proxy_enabled_check.GetValue() else "",
         }
 
 

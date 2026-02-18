@@ -13,56 +13,52 @@ from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from src.models.config import AppConfig, ChannelConfig
+from src.core.converter import (
+    transform_request_for_provider,
+    transform_response_from_provider,
+    transform_stream_chunk_from_provider,
+    FormatConverter,
+    ProviderType,
+)
 
 logger = logging.getLogger("ai-gateway.proxy")
 
-# Mapping of provider types to their API paths
-PROVIDER_PATHS = {
-    "openai": {
-        "chat": "/v1/chat/completions",
-        "completions": "/v1/completions",
-        "embeddings": "/v1/embeddings",
-        "models": "/v1/models",
-        "images": "/v1/images/generations",
-        "audio_speech": "/v1/audio/speech",
-        "audio_transcriptions": "/v1/audio/transcriptions",
-    },
-    "anthropic": {
-        "chat": "/v1/messages",
-        "models": "/v1/models",
-    },
-    "gemini": {
-        "chat": "/v1beta/models/{model}:generateContent",
-        "models": "/v1beta/models",
-    },
-    "ollama": {
-        "chat": "/api/chat",
-        "completions": "/api/generate",
-        "models": "/api/tags",
-        "embeddings": "/api/embeddings",
-    },
-    "custom": {
-        "chat": "/v1/chat/completions",
-        "completions": "/v1/completions",
-        "embeddings": "/v1/embeddings",
-        "models": "/v1/models",
-    }
-}
-
-# Anthropic-specific header mapping
-ANTHROPIC_HEADERS = {
-    "x-api-key": None,  # handled specially
-    "anthropic-version": "2023-06-01",
+# Headers that should not be forwarded to upstream (hop-by-hop or sensitive)
+SKIP_HEADERS = {
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "authorization",
+    "x-api-key",
+    "x-goog-api-key",
+    "cookie",
 }
 
 
 def build_upstream_headers(channel: ChannelConfig,
                            original_headers: dict) -> dict:
-    """Build headers for the upstream request based on channel type"""
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "AI-Gateway/1.0",
-    }
+    """
+    Build headers for the upstream request.
+    
+    Preserves most original headers but removes hop-by-hop and auth headers,
+    then adds channel-specific authentication.
+    """
+    headers = {}
+
+    for key, value in original_headers.items():
+        key_lower = key.lower()
+        if key_lower in SKIP_HEADERS:
+            continue
+        headers[key] = value
+
+    headers["Content-Type"] = "application/json"
 
     channel_type = channel.type.lower()
 
@@ -77,130 +73,85 @@ def build_upstream_headers(channel: ChannelConfig,
         if channel.api_key:
             headers["Authorization"] = f"Bearer {channel.api_key}"
 
-    # Forward some original headers that might be useful
-    for h in ["Accept", "Accept-Language"]:
-        if h.lower() in {k.lower() for k in original_headers}:
-            headers[h] = original_headers.get(
-                h, original_headers.get(h.lower(), ""))
-
     return headers
 
 
-def get_upstream_url(channel: ChannelConfig, path: str) -> str:
-    """Build the full upstream URL"""
+def get_upstream_url(
+    channel: ChannelConfig,
+    model: str = "",
+    is_stream: bool = False,
+    endpoint_type: str = "chat",
+) -> str:
+    """
+    Build the full upstream URL based on channel type and endpoint.
+    
+    Args:
+        channel: Channel configuration
+        model: Model name (required for Gemini and some endpoints)
+        is_stream: Whether this is a streaming request
+        endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
+        
+    Returns:
+        Full upstream URL
+    """
     base = channel.base_url.rstrip("/")
-
-    channel_type = channel.type.lower()
-
-    # For Gemini, add API key as query param
-    if channel_type == "gemini" and channel.api_key:
-        sep = "&" if "?" in path else "?"
-        return f"{base}{path}{sep}key={channel.api_key}"
-
-    return f"{base}{path}"
-
-
-def transform_request_for_provider(body: dict, channel: ChannelConfig) -> dict:
-    """Transform request body if needed for specific providers"""
     channel_type = channel.type.lower()
 
     if channel_type == "anthropic":
-        return transform_openai_to_anthropic(body)
+        if endpoint_type == "chat":
+            url = f"{base}/v1/messages"
+        elif endpoint_type == "models":
+            url = f"{base}/v1/models"
+        else:
+            url = f"{base}/v1/{endpoint_type}"
+        return url
 
-    # For all other providers (openai, custom, ollama), pass through as-is
-    return body
+    if channel_type == "gemini":
+        api_version = "v1beta"
+        if endpoint_type == "chat":
+            method = "streamGenerateContent" if is_stream else "generateContent"
+            url = f"{base}/{api_version}/models/{model}:{method}"
+            if is_stream:
+                url += "?alt=sse"
+        elif endpoint_type == "models":
+            url = f"{base}/{api_version}/models"
+        else:
+            url = f"{base}/{api_version}/{endpoint_type}"
+        if channel.api_key:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}key={channel.api_key}"
+        return url
 
+    if channel_type == "ollama":
+        if endpoint_type == "chat":
+            url = f"{base}/api/chat"
+        elif endpoint_type == "completions":
+            url = f"{base}/api/generate"
+        elif endpoint_type == "embeddings":
+            url = f"{base}/api/embeddings"
+        elif endpoint_type == "models":
+            url = f"{base}/api/tags"
+        else:
+            url = f"{base}/api/{endpoint_type}"
+        return url
 
-def transform_openai_to_anthropic(body: dict) -> dict:
-    """Transform OpenAI chat format to Anthropic messages format"""
-    messages = body.get("messages", [])
-    system_prompt = None
-    anthropic_messages = []
-
-    for msg in messages:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-
-        if role == "system":
-            system_prompt = content
-        elif role in ("user", "assistant"):
-            anthropic_messages.append({
-                "role":
-                role,
-                "content":
-                content if isinstance(content, str) else content
-            })
-
-    result = {
-        "model": body.get("model", "claude-3-5-sonnet-20241022"),
-        "messages": anthropic_messages,
-        "max_tokens": body.get("max_tokens", 4096),
-    }
-
-    if system_prompt:
-        result["system"] = system_prompt
-
-    if "temperature" in body:
-        result["temperature"] = body["temperature"]
-    if "top_p" in body:
-        result["top_p"] = body["top_p"]
-    if "stream" in body:
-        result["stream"] = body["stream"]
-
-    return result
-
-
-def transform_response_from_provider(response_data: dict,
-                                     channel: ChannelConfig) -> dict:
-    """Transform response back to OpenAI format if needed"""
-    channel_type = channel.type.lower()
-
-    if channel_type == "anthropic":
-        return transform_anthropic_to_openai(response_data)
-
-    return response_data
-
-
-def transform_anthropic_to_openai(data: dict) -> dict:
-    """Transform Anthropic response to OpenAI format"""
-    if data.get("type") == "error":
-        return data
-
-    content_blocks = data.get("content", [])
-    text_content = ""
-
-    for block in content_blocks:
-        if block.get("type") == "text":
-            text_content += block.get("text", "")
-
-    usage = data.get("usage", {})
-
-    return {
-        "id":
-        data.get("id", ""),
-        "object":
-        "chat.completion",
-        "created":
-        0,
-        "model":
-        data.get("model", ""),
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": text_content,
-            },
-            "finish_reason": data.get("stop_reason", "stop"),
-        }],
-        "usage": {
-            "prompt_tokens":
-            usage.get("input_tokens", 0),
-            "completion_tokens":
-            usage.get("output_tokens", 0),
-            "total_tokens":
-            usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
-        }
-    }
+    if endpoint_type == "chat":
+        url = f"{base}/chat/completions"
+    elif endpoint_type == "completions":
+        url = f"{base}/completions"
+    elif endpoint_type == "embeddings":
+        url = f"{base}/embeddings"
+    elif endpoint_type == "models":
+        url = f"{base}/models"
+    elif endpoint_type == "images":
+        url = f"{base}/images/generations"
+    elif endpoint_type == "audio_speech":
+        url = f"{base}/audio/speech"
+    elif endpoint_type == "audio_transcriptions":
+        url = f"{base}/audio/transcriptions"
+    else:
+        url = f"{base}/{endpoint_type}"
+    return url
 
 
 async def stream_response(
@@ -210,9 +161,23 @@ async def stream_response(
     headers: dict,
     body: dict,
     channel: ChannelConfig,
+    model: str = "",
+    source_format: str = "openai",
 ) -> AsyncGenerator[bytes, None]:
-    """Stream response from upstream provider"""
-    channel_type = channel.type.lower()
+    """
+    Stream response from upstream provider.
+    
+    Args:
+        client: HTTP client
+        method: HTTP method
+        url: Target URL
+        headers: Request headers
+        body: Request body
+        channel: Channel configuration
+        model: Model name
+        source_format: Format of the original request (openai, anthropic, gemini)
+    """
+    target_format = channel.type.lower()
 
     try:
         async with client.stream(
@@ -230,31 +195,38 @@ async def stream_response(
                 yield b"data: [DONE]\n\n"
                 return
 
-            if channel_type == "anthropic":
-                # Transform Anthropic SSE to OpenAI SSE format
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str == "[DONE]":
-                            yield b"data: [DONE]\n\n"
-                            continue
-                        try:
-                            event_data = json.loads(data_str)
-                            openai_chunk = transform_anthropic_stream_chunk(
-                                event_data)
-                            if openai_chunk:
-                                yield f"data: {json.dumps(openai_chunk)}\n\n".encode(
-                                )
-                        except json.JSONDecodeError:
-                            pass
-                    elif line.startswith("event: "):
-                        pass  # ignore event type lines
-            else:
-                # Pass through OpenAI-compatible SSE
+            # If source format matches target format, pass through
+            if source_format == target_format:
                 async for chunk in response.aiter_bytes():
                     yield chunk
+                return
+
+            # Transform stream chunks from target format to source format
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        yield b"data: [DONE]\n\n"
+                        continue
+                    try:
+                        event_data = json.loads(data_str)
+                        # Transform chunk from target format to source format
+                        transformed_chunk = FormatConverter.transform_stream_chunk(
+                            event_data, ProviderType(target_format),
+                            ProviderType(source_format), model)
+                        if transformed_chunk:
+                            yield f"data: {json.dumps(transformed_chunk)}\n\n".encode(
+                            )
+                    except json.JSONDecodeError:
+                        pass
+                elif line.startswith("event: "):
+                    pass
+
+            # Gemini doesn't send [DONE], so we add it
+            if target_format == "gemini":
+                yield b"data: [DONE]\n\n"
 
     except httpx.TimeoutException:
         yield f"data: {json.dumps({'error': 'Upstream request timed out'})}\n\n".encode(
@@ -265,73 +237,24 @@ async def stream_response(
         yield b"data: [DONE]\n\n"
 
 
-def transform_anthropic_stream_chunk(event_data: dict) -> Optional[dict]:
-    """Transform a single Anthropic SSE event to OpenAI delta format"""
-    event_type = event_data.get("type", "")
-
-    if event_type == "content_block_delta":
-        delta = event_data.get("delta", {})
-        if delta.get("type") == "text_delta":
-            return {
-                "id":
-                "chatcmpl-stream",
-                "object":
-                "chat.completion.chunk",
-                "created":
-                0,
-                "model":
-                "",
-                "choices": [{
-                    "index": 0,
-                    "delta": {
-                        "content": delta.get("text", "")
-                    },
-                    "finish_reason": None,
-                }]
-            }
-    elif event_type == "message_stop":
-        return {
-            "id": "chatcmpl-stream",
-            "object": "chat.completion.chunk",
-            "created": 0,
-            "model": "",
-            "choices": [{
-                "index": 0,
-                "delta": {},
-                "finish_reason": "stop",
-            }]
-        }
-    elif event_type == "message_start":
-        return {
-            "id":
-            event_data.get("message", {}).get("id", "chatcmpl-stream"),
-            "object":
-            "chat.completion.chunk",
-            "created":
-            0,
-            "model":
-            event_data.get("message", {}).get("model", ""),
-            "choices": [{
-                "index": 0,
-                "delta": {
-                    "role": "assistant"
-                },
-                "finish_reason": None,
-            }]
-        }
-
-    return None
-
-
 class ProxyEngine:
     """Main proxy engine for routing requests to upstream providers"""
 
     def __init__(self, config: AppConfig):
         self.config = config
         self._client: Optional[httpx.AsyncClient] = None
+        self._proxy_clients: dict = {}
 
     def update_config(self, config: AppConfig):
         self.config = config
+        self._clear_proxy_clients()
+
+    def _clear_proxy_clients(self):
+        """Clear cached proxy clients to force re-creation with new settings."""
+        for client in self._proxy_clients.values():
+            if not client.is_closed:
+                asyncio.create_task(client.aclose())
+        self._proxy_clients.clear()
 
     async def get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -343,16 +266,60 @@ class ProxyEngine:
             )
         return self._client
 
+    async def get_proxy_client(self, proxy_url: str) -> httpx.AsyncClient:
+        """
+        Get or create an HTTP client with proxy support.
+        
+        Args:
+            proxy_url: Proxy URL (e.g., http://127.0.0.1:7890, socks5://127.0.0.1:1080)
+            
+        Returns:
+            httpx.AsyncClient configured with the specified proxy
+        """
+        if proxy_url in self._proxy_clients:
+            client = self._proxy_clients[proxy_url]
+            if not client.is_closed:
+                return client
+
+        client = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(120.0),
+            limits=httpx.Limits(max_connections=100,
+                                max_keepalive_connections=20),
+            proxy=proxy_url,
+        )
+        self._proxy_clients[proxy_url] = client
+        return client
+
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
+        for client in self._proxy_clients.values():
+            if not client.is_closed:
+                await client.aclose()
+        self._proxy_clients.clear()
 
     async def proxy_request(
         self,
         request: Request,
-        path: str,
+        endpoint_type: str = "chat",
         token_key: Optional[str] = None,
+        source_format: str = "openai",
     ) -> Union[StreamingResponse, JSONResponse]:
+        """
+        Proxy a request to upstream channels.
+        
+        Args:
+            request: FastAPI request object
+            endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
+            token_key: Optional authentication token
+            source_format: Format of the incoming request (openai, anthropic, gemini)
+        """
+        source_format = source_format.lower()
+        if source_format not in ("openai", "anthropic", "gemini"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported source format: {source_format}")
 
         # Validate token if auth is required
         token_config = None
@@ -405,8 +372,9 @@ class ProxyEngine:
         last_error = None
         for channel in channels:
             try:
-                return await self._forward_to_channel(request, channel, path,
-                                                      body)
+                return await self._forward_to_channel(request, channel,
+                                                      endpoint_type, body,
+                                                      source_format)
             except HTTPException as e:
                 if e.status_code in (401, 403):
                     raise  # Don't retry auth errors
@@ -433,26 +401,44 @@ class ProxyEngine:
         self,
         request: Request,
         channel: ChannelConfig,
-        path: str,
+        endpoint_type: str,
         body: dict,
+        source_format: str = "openai",
     ) -> Union[StreamingResponse, JSONResponse]:
+        """
+        Forward request to a specific channel.
+        
+        Args:
+            request: FastAPI request object
+            channel: Target channel configuration
+            endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
+            body: Request body
+            source_format: Format of the incoming request (openai, anthropic, gemini)
+        """
+        target_format = channel.type.lower()
 
-        # Build upstream URL
-        url = get_upstream_url(channel, path)
+        # Transform request body from source format to target format
+        upstream_body, model, extra_info = FormatConverter.transform_request(
+            body, ProviderType(source_format), ProviderType(target_format))
+        is_streaming = extra_info.get("is_stream", body.get("stream", False))
+
+        # Build upstream URL based on channel type and endpoint
+        url = get_upstream_url(channel, model, is_streaming, endpoint_type)
 
         # Build headers
         headers = build_upstream_headers(channel, dict(request.headers))
 
-        # Transform body for provider if needed
-        upstream_body = transform_request_for_provider(body, channel)
-
-        is_streaming = upstream_body.get("stream", False)
-        client = await self.get_client()
+        # Get appropriate client (with or without proxy)
+        if channel.proxy_enabled and channel.proxy_url:
+            client = await self.get_proxy_client(channel.proxy_url)
+        else:
+            client = await self.get_client()
 
         if is_streaming:
             return StreamingResponse(stream_response(client, "POST", url,
                                                      headers, upstream_body,
-                                                     channel),
+                                                     channel, model,
+                                                     source_format),
                                      media_type="text/event-stream",
                                      headers={
                                          "Cache-Control": "no-cache",
@@ -470,8 +456,10 @@ class ProxyEngine:
 
                 if response.status_code == 200:
                     data = response.json()
-                    transformed = transform_response_from_provider(
-                        data, channel)
+                    # Transform response from target format back to source format
+                    transformed = FormatConverter.transform_response(
+                        data, ProviderType(target_format),
+                        ProviderType(source_format), model)
                     return JSONResponse(content=transformed, status_code=200)
                 else:
                     error_detail = f"Upstream returned {response.status_code}"

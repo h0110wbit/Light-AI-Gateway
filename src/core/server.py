@@ -40,6 +40,7 @@ def _configure_logging(log_level: str = "info"):
         lgr.setLevel(level)
         lgr.propagate = True
 
+
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -125,60 +126,115 @@ def create_app(config: AppConfig) -> FastAPI:
     async def chat_completions(
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
+        """
+        Chat completions endpoint.
+        
+        Args:
+            request: FastAPI request
+            authorization: Bearer token
+            source_format: Format of the request body (openai, anthropic, gemini)
+        """
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, "/v1/chat/completions", token)
+        return await engine.proxy_request(request, "chat", token,
+                                          source_format)
+
+    # ─── Anthropic messages endpoint ───────────────────────────────────────────
+    @app.post("/v1/messages")
+    async def anthropic_messages(
+            request: Request,
+            authorization: Optional[str] = Header(default=None),
+    ):
+        """
+        Anthropic-compatible messages endpoint.
+        Accepts requests in Anthropic format and returns responses in Anthropic format.
+        """
+        engine = get_proxy_engine()
+        token = extract_token(authorization)
+        return await engine.proxy_request(request,
+                                          "chat",
+                                          token,
+                                          source_format="anthropic")
+
+    # ─── Gemini generateContent endpoint ───────────────────────────────────────
+    @app.post("/v1beta/models/{model}:generateContent")
+    async def gemini_generate_content(
+            model: str,
+            request: Request,
+            authorization: Optional[str] = Header(default=None),
+    ):
+        """
+        Gemini-compatible generateContent endpoint.
+        Accepts requests in Gemini format and returns responses in Gemini format.
+        """
+        engine = get_proxy_engine()
+        token = extract_token(authorization)
+        return await engine.proxy_request(request,
+                                          "chat",
+                                          token,
+                                          source_format="gemini")
 
     # ─── Completions (legacy) ───────────────────────────────────────────────────
     @app.post("/v1/completions")
     async def completions(
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, "/v1/completions", token)
+        return await engine.proxy_request(request, "completions", token,
+                                          source_format)
 
     # ─── Embeddings ─────────────────────────────────────────────────────────────
     @app.post("/v1/embeddings")
     async def embeddings(
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, "/v1/embeddings", token)
+        return await engine.proxy_request(request, "embeddings", token,
+                                          source_format)
 
     # ─── Images ─────────────────────────────────────────────────────────────────
     @app.post("/v1/images/generations")
     async def image_generations(
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, "/v1/images/generations", token)
+        return await engine.proxy_request(request, "images", token,
+                                          source_format)
 
     # ─── Audio TTS ──────────────────────────────────────────────────────────────
     @app.post("/v1/audio/speech")
     async def audio_speech(
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, "/v1/audio/speech", token)
+        return await engine.proxy_request(request, "audio_speech", token,
+                                          source_format)
 
     # ─── Audio transcriptions ───────────────────────────────────────────────────
     @app.post("/v1/audio/transcriptions")
     async def audio_transcriptions(
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, "/v1/audio/transcriptions", token)
+        return await engine.proxy_request(request, "audio_transcriptions",
+                                          token, source_format)
 
     # ─── Catch-all proxy ────────────────────────────────────────────────────────
     @app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
@@ -186,10 +242,11 @@ def create_app(config: AppConfig) -> FastAPI:
         path: str,
         request: Request,
         authorization: Optional[str] = Header(default=None),
+        source_format: str = "openai",
     ):
         engine = get_proxy_engine()
         token = extract_token(authorization)
-        return await engine.proxy_request(request, f"/v1/{path}", token)
+        return await engine.proxy_request(request, path, token, source_format)
 
     # ─── Global error handler ───────────────────────────────────────────────────
     @app.exception_handler(Exception)
@@ -197,8 +254,10 @@ def create_app(config: AppConfig) -> FastAPI:
         logger.error(f"Unhandled error: {exc}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"error": {"message": str(exc), "type": "internal_error"}}
-        )
+            content={"error": {
+                "message": str(exc),
+                "type": "internal_error"
+            }})
 
     return app
 
@@ -241,8 +300,8 @@ class GatewayServer:
             host=config.settings.host,
             port=config.settings.port,
             log_level=config.settings.log_level,
-            log_config=None,      # ← disable uvicorn's own logging setup
-            access_log=False,     # ← we handle our own access logging if needed
+            log_config=None,  # ← disable uvicorn's own logging setup
+            access_log=False,  # ← we handle our own access logging if needed
         )
         self._server = uvicorn.Server(uv_config)
 
@@ -255,7 +314,9 @@ class GatewayServer:
                 self._running = False
                 self._notify("stopped")
 
-        self._thread = threading.Thread(target=run, daemon=True, name="gateway-server")
+        self._thread = threading.Thread(target=run,
+                                        daemon=True,
+                                        name="gateway-server")
         self._thread.start()
         self._running = True
         self._notify("started")

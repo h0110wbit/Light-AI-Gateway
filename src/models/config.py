@@ -39,6 +39,8 @@ class ChannelConfig(BaseModel):
     priority: int = 1  # lower = higher priority
     timeout: int = 60
     max_retries: int = 3
+    proxy_enabled: bool = False
+    proxy_url: str = ""  # e.g., http://127.0.0.1:7890, socks5://127.0.0.1:1080
 
     @field_validator('base_url')
     @classmethod
