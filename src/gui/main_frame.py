@@ -11,7 +11,22 @@ from src.gui.panels.dashboard import DashboardPanel
 from src.gui.panels.channels import ChannelsPanel
 from src.gui.panels.tokens import TokensPanel
 from src.gui.panels.settings import SettingsPanel
-from src.gui.tray import SystemTrayIcon
+from src.gui.tray import SystemTrayIcon, get_icon_path
+import os
+
+
+def dip(window: wx.Window, size: int) -> int:
+    """将逻辑尺寸转换为物理像素尺寸（DPI感知）。"""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        return size
+
+
+def dip_size(window: wx.Window, width: int, height: int) -> tuple:
+    """将逻辑尺寸元组转换为物理像素尺寸（DPI感知）。"""
+    return (dip(window, width), dip(window, height))
+
 
 NAV_ITEMS = [
     ("🏠", "Dashboard", "dashboard"),
@@ -25,7 +40,7 @@ class NavButton(wx.Panel):
     """Sidebar navigation button"""
 
     def __init__(self, parent, icon: str, label: str, key: str, on_click):
-        super().__init__(parent, size=(-1, 52))
+        super().__init__(parent, size=dip_size(parent, -1, 52))
         self.key = key
         self.label = label
         self.icon = icon
@@ -34,7 +49,7 @@ class NavButton(wx.Panel):
         self._hover = False
 
         self.SetBackgroundColour(BG_DARK)
-        self.SetMinSize((-1, 52))
+        self.SetMinSize(dip_size(self, -1, 52))
 
         self.Bind(wx.EVT_PAINT, self._on_paint)
         self.Bind(wx.EVT_LEFT_DOWN, self._on_click)
@@ -59,6 +74,9 @@ class NavButton(wx.Panel):
             return
 
         w, h = self.GetSize()
+        accent_width = dip(self, 3)
+        icon_x = dip(self, 16)
+        label_x = dip(self, 44)
 
         # Background
         if self._selected:
@@ -66,7 +84,7 @@ class NavButton(wx.Panel):
             # Left accent bar
             gc.SetBrush(gc.CreateBrush(wx.Brush(ACCENT)))
             gc.SetPen(gc.CreatePen(wx.Pen(wx.TRANSPARENT_PEN)))
-            gc.DrawRectangle(0, 0, 3, h)
+            gc.DrawRectangle(0, 0, accent_width, h)
         elif self._hover:
             bg = BG_CARD
         else:
@@ -74,30 +92,30 @@ class NavButton(wx.Panel):
 
         gc.SetBrush(gc.CreateBrush(wx.Brush(bg)))
         gc.SetPen(gc.CreatePen(wx.Pen(wx.TRANSPARENT_PEN)))
-        gc.DrawRectangle(3 if self._selected else 0, 0, w, h)
+        gc.DrawRectangle(accent_width if self._selected else 0, 0, w, h)
 
         # Icon
         icon_color = ACCENT if self._selected else (
             TEXT_PRIMARY if self._hover else TEXT_SECONDARY)
         gc.SetFont(gc.CreateFont(make_font(16), icon_color))
         iw, ih = gc.GetTextExtent(self.icon)
-        gc.DrawText(self.icon, 16, (h - ih) / 2)
+        gc.DrawText(self.icon, icon_x, (h - ih) / 2)
 
         # Label
         label_color = TEXT_PRIMARY if self._selected else TEXT_SECONDARY
         gc.SetFont(
             gc.CreateFont(make_font(9, bold=self._selected), label_color))
         lw, lh = gc.GetTextExtent(self.label)
-        gc.DrawText(self.label, 44, (h - lh) / 2)
+        gc.DrawText(self.label, label_x, (h - lh) / 2)
 
 
 class Sidebar(wx.Panel):
     """Left sidebar with logo and navigation"""
 
     def __init__(self, parent, on_navigate):
-        super().__init__(parent, size=(180, -1))
+        super().__init__(parent, size=dip_size(parent, 180, -1))
         self.SetBackgroundColour(BG_DARK)
-        self.SetMinSize((180, -1))
+        self.SetMinSize(dip_size(self, 180, -1))
         self.on_navigate = on_navigate
         self._nav_buttons = {}
         self._build_ui()
@@ -110,26 +128,45 @@ class Sidebar(wx.Panel):
         logo_panel.SetBackgroundColour(BG_DARK)
         logo_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        logo_lbl = wx.StaticText(logo_panel, label="⊕")
-        logo_lbl.SetFont(make_font(28, family=FONT_TITLE))
-        logo_lbl.SetForegroundColour(ACCENT)
-        logo_sizer.Add(logo_lbl, 0, wx.TOP | wx.LEFT, PADDING_LG)
+        icon_path = get_icon_path()
+        if os.path.exists(icon_path):
+            img = wx.Image(icon_path, wx.BITMAP_TYPE_ICO)
+            if img.IsOk():
+                icon_size = dip(self, 32)
+                img = img.Scale(icon_size, icon_size, wx.IMAGE_QUALITY_HIGH)
+                logo_bmp = wx.StaticBitmap(logo_panel,
+                                           bitmap=img.ConvertToBitmap())
+                logo_sizer.Add(logo_bmp, 0,
+                               wx.TOP | wx.ALIGN_CENTER_HORIZONTAL, PADDING_LG)
+            else:
+                logo_lbl = wx.StaticText(logo_panel, label="⊕")
+                logo_lbl.SetFont(make_font(28, family=FONT_TITLE))
+                logo_lbl.SetForegroundColour(ACCENT)
+                logo_sizer.Add(logo_lbl, 0,
+                               wx.TOP | wx.ALIGN_CENTER_HORIZONTAL, PADDING_LG)
+        else:
+            logo_lbl = wx.StaticText(logo_panel, label="⊕")
+            logo_lbl.SetFont(make_font(28, family=FONT_TITLE))
+            logo_lbl.SetForegroundColour(ACCENT)
+            logo_sizer.Add(logo_lbl, 0, wx.TOP | wx.ALIGN_CENTER_HORIZONTAL,
+                           PADDING_LG)
 
         app_lbl = wx.StaticText(logo_panel, label="AI Gateway")
         app_lbl.SetFont(make_font(11, bold=True, family=FONT_TITLE))
         app_lbl.SetForegroundColour(TEXT_PRIMARY)
-        logo_sizer.Add(app_lbl, 0, wx.LEFT, PADDING_LG)
+        logo_sizer.Add(app_lbl, 0, wx.ALIGN_CENTER_HORIZONTAL)
 
         tagline = wx.StaticText(logo_panel, label="Personal LLM Proxy")
         tagline.SetFont(make_font(7))
         tagline.SetForegroundColour(TEXT_MUTED)
-        logo_sizer.Add(tagline, 0, wx.LEFT | wx.BOTTOM, PADDING_LG)
+        logo_sizer.Add(tagline, 0, wx.BOTTOM | wx.ALIGN_CENTER_HORIZONTAL,
+                       PADDING_LG)
 
         logo_panel.SetSizer(logo_sizer)
         sizer.Add(logo_panel, 0, wx.EXPAND)
 
         # Separator
-        sep = wx.Panel(self, size=(-1, 1))
+        sep = wx.Panel(self, size=dip_size(self, -1, 1))
         sep.SetBackgroundColour(BORDER)
         sizer.Add(sep, 0, wx.EXPAND)
 
@@ -144,7 +181,7 @@ class Sidebar(wx.Panel):
         sizer.AddStretchSpacer()
 
         # Bottom separator + info
-        sep2 = wx.Panel(self, size=(-1, 1))
+        sep2 = wx.Panel(self, size=dip_size(self, -1, 1))
         sep2.SetBackgroundColour(BORDER)
         sizer.Add(sep2, 0, wx.EXPAND)
 
@@ -153,7 +190,8 @@ class Sidebar(wx.Panel):
         self.server_status.SetBackgroundColour(BG_DARK)
         status_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        self._status_dot = wx.Panel(self.server_status, size=(8, 8))
+        self._status_dot = wx.Panel(self.server_status,
+                                    size=dip_size(self, 8, 8))
         self._status_dot.SetBackgroundColour(TEXT_MUTED)
         status_sizer.Add(self._status_dot, 0,
                          wx.ALIGN_CENTER_VERTICAL | wx.LEFT, PADDING_MD)
@@ -162,7 +200,7 @@ class Sidebar(wx.Panel):
         self._status_lbl.SetFont(make_font(8))
         self._status_lbl.SetForegroundColour(TEXT_MUTED)
         status_sizer.Add(self._status_lbl, 0,
-                         wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
+                         wx.ALIGN_CENTER_VERTICAL | wx.LEFT, dip(self, 6))
 
         self.server_status.SetSizer(status_sizer)
         sizer.Add(self.server_status, 0, wx.EXPAND | wx.ALL, PADDING_SM)
@@ -208,7 +246,7 @@ class MainFrame(wx.Frame):
         )
 
         self.SetBackgroundColour(BG_DARK)
-        self.SetMinSize((800, 580))
+        self.SetMinSize(dip_size(self, 800, 580))
 
         # Track if we should really close (vs hide to tray)
         self._really_close = False
@@ -258,7 +296,7 @@ class MainFrame(wx.Frame):
         main_sizer.Add(self.sidebar, 0, wx.EXPAND)
 
         # Vertical separator
-        vsep = wx.Panel(self, size=(1, -1))
+        vsep = wx.Panel(self, size=dip_size(self, 1, -1))
         vsep.SetBackgroundColour(BORDER)
         main_sizer.Add(vsep, 0, wx.EXPAND)
 

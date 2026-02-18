@@ -8,6 +8,19 @@ from src.gui.theme import *
 from src.gui.widgets import *
 
 
+def dip(window: wx.Window, size: int) -> int:
+    """将逻辑尺寸转换为物理像素尺寸（DPI感知）。"""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        return size
+
+
+def dip_size(window: wx.Window, width: int, height: int) -> tuple:
+    """将逻辑尺寸元组转换为物理像素尺寸（DPI感知）。"""
+    return (dip(window, width), dip(window, height))
+
+
 class SettingsPanel(wx.Panel):
     """Global settings panel"""
 
@@ -50,7 +63,7 @@ class SettingsPanel(wx.Panel):
 
         self.host_ctrl = wx.TextCtrl(host_panel, value="0.0.0.0")
         style_text_ctrl(self.host_ctrl)
-        self.host_ctrl.SetMinSize((-1, 30))
+        self.host_ctrl.SetMinSize(dip_size(host_panel, -1, 30))
         host_sizer.Add(self.host_ctrl, 0, wx.EXPAND)
 
         hint = wx.StaticText(
@@ -78,7 +91,7 @@ class SettingsPanel(wx.Panel):
                                      max=65535)
         self.port_spin.SetBackgroundColour(BG_INPUT)
         self.port_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.port_spin.SetMinSize((-1, 30))
+        self.port_spin.SetMinSize(dip_size(port_panel, -1, 30))
         port_sizer.Add(self.port_spin, 0, wx.EXPAND)
 
         port_panel.SetSizer(port_sizer)
@@ -102,7 +115,7 @@ class SettingsPanel(wx.Panel):
         self.log_level.SetSelection(1)  # info
         self.log_level.SetFont(make_font(9))
         self.log_level.SetBackgroundColour(BG_INPUT)
-        self.log_level.SetMinSize((-1, 30))
+        self.log_level.SetMinSize(dip_size(log_panel, -1, 30))
         log_sizer.Add(self.log_level, 0)
 
         log_panel.SetSizer(log_sizer)
@@ -156,7 +169,7 @@ class SettingsPanel(wx.Panel):
                                         max=600)
         self.timeout_spin.SetBackgroundColour(BG_INPUT)
         self.timeout_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.timeout_spin.SetMinSize((-1, 30))
+        self.timeout_spin.SetMinSize(dip_size(timeout_panel, -1, 30))
         timeout_sizer.Add(self.timeout_spin, 0)
 
         timeout_panel.SetSizer(timeout_sizer)
@@ -198,7 +211,7 @@ class SettingsPanel(wx.Panel):
 
         self.cors_origins_ctrl = wx.TextCtrl(cors_panel, value="*")
         style_text_ctrl(self.cors_origins_ctrl)
-        self.cors_origins_ctrl.SetMinSize((-1, 30))
+        self.cors_origins_ctrl.SetMinSize(dip_size(cors_panel, -1, 30))
         cors_sizer.Add(self.cors_origins_ctrl, 0, wx.EXPAND)
 
         cors_panel.SetSizer(cors_sizer)
@@ -247,11 +260,13 @@ class SettingsPanel(wx.Panel):
 
         self.reset_btn = wx.Button(self,
                                    label="Reset Defaults",
-                                   size=(120, 34))
+                                   size=dip_size(self, 120, 34))
         style_button_secondary(self.reset_btn)
         btn_row.Add(self.reset_btn, 0, wx.RIGHT, PADDING_SM)
 
-        self.save_btn = wx.Button(self, label="Save Settings", size=(130, 34))
+        self.save_btn = wx.Button(self,
+                                  label="Save Settings",
+                                  size=dip_size(self, 130, 34))
         style_button_primary(self.save_btn)
         btn_row.Add(self.save_btn, 0)
 

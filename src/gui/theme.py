@@ -41,6 +41,31 @@ PADDING_LG = 20
 PADDING_XL = 32
 
 
+def get_scaled_sizes(window: wx.Window = None):
+    """
+    获取DPI缩放后的尺寸常量。
+    如果提供了window参数，则使用该窗口的DPI设置进行缩放。
+    否则尝试使用wx.Window的静态方法进行缩放。
+    """
+
+    def scale(val):
+        if window:
+            try:
+                return window.FromDIP(val)
+            except AttributeError:
+                return val
+        else:
+            return dip_to_px(val)
+
+    return {
+        'border_radius': scale(BORDER_RADIUS),
+        'padding_sm': scale(PADDING_SM),
+        'padding_md': scale(PADDING_MD),
+        'padding_lg': scale(PADDING_LG),
+        'padding_xl': scale(PADDING_XL),
+    }
+
+
 def make_font(size: int = 9,
               bold: bool = False,
               italic: bool = False,
@@ -92,3 +117,35 @@ def style_label(label: wx.StaticText,
     color = TEXT_SECONDARY if secondary else TEXT_PRIMARY
     label.SetForegroundColour(color)
     label.SetFont(make_font(size, bold=bold))
+
+
+# ─── DIP Conversion Utilities ───────────────────────────────────────────────────
+def dip_to_px(dip_value: int) -> int:
+    """Convert DIP (Device Independent Pixels) to physical pixels.
+    
+    On standard displays, 1 DIP = 1 pixel.
+    On high DPI displays, this scales appropriately.
+    """
+    try:
+        return wx.Window.DIPToPx(dip_value)
+    except AttributeError:
+        # Fallback for older wxPython versions
+        return dip_value
+
+
+def px_to_dip(px_value: int) -> int:
+    """Convert physical pixels to DIP (Device Independent Pixels)."""
+    try:
+        return wx.Window.PxToDIP(px_value)
+    except AttributeError:
+        # Fallback for older wxPython versions
+        return px_value
+
+
+def scale_for_dip(window: wx.Window, size: int) -> int:
+    """Scale a size value for the given window's DPI."""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        # Fallback for older wxPython versions
+        return size

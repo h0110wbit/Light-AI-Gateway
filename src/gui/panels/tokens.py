@@ -10,6 +10,19 @@ from src.gui.widgets import *
 from src.models.config import TokenConfig
 
 
+def dip(window: wx.Window, size: int) -> int:
+    """将逻辑尺寸转换为物理像素尺寸（DPI感知）。"""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        return size
+
+
+def dip_size(window: wx.Window, width: int, height: int) -> tuple:
+    """将逻辑尺寸元组转换为物理像素尺寸（DPI感知）。"""
+    return (dip(window, width), dip(window, height))
+
+
 def generate_token(prefix: str = "sk-gw") -> str:
     """Generate a random API token"""
     chars = string.ascii_letters + string.digits
@@ -24,7 +37,7 @@ class TokenDialog(wx.Dialog):
         title = "Edit Token" if token else "Create Token"
         super().__init__(parent,
                          title=title,
-                         size=(500, 480),
+                         size=dip_size(parent, 500, 480),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.token = token
         self.channels = channels or []
@@ -65,10 +78,12 @@ class TokenDialog(wx.Dialog):
         key_row = wx.BoxSizer(wx.HORIZONTAL)
         self.key_ctrl = wx.TextCtrl(key_panel, value=generate_token())
         style_text_ctrl(self.key_ctrl)
-        self.key_ctrl.SetMinSize((-1, 30))
+        self.key_ctrl.SetMinSize(dip_size(key_panel, -1, 30))
         key_row.Add(self.key_ctrl, 1, wx.EXPAND | wx.RIGHT, PADDING_SM)
 
-        gen_btn = wx.Button(key_panel, label="↺ Generate", size=(90, 30))
+        gen_btn = wx.Button(key_panel,
+                            label="↺ Generate",
+                            size=dip_size(key_panel, 90, 30))
         gen_btn.SetBackgroundColour(BG_INPUT)
         gen_btn.SetForegroundColour(ACCENT)
         gen_btn.SetFont(make_font(8))
@@ -93,7 +108,7 @@ class TokenDialog(wx.Dialog):
 
         self.models_ctrl = wx.TextCtrl(models_panel)
         style_text_ctrl(self.models_ctrl)
-        self.models_ctrl.SetMinSize((-1, 30))
+        self.models_ctrl.SetMinSize(dip_size(models_panel, -1, 30))
         models_sizer.Add(self.models_ctrl, 0, wx.EXPAND)
 
         hint = wx.StaticText(models_panel,
@@ -123,11 +138,17 @@ class TokenDialog(wx.Dialog):
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         btn_row.AddStretchSpacer()
 
-        cancel_btn = wx.Button(self, wx.ID_CANCEL, "Cancel", size=(80, 32))
+        cancel_btn = wx.Button(self,
+                               wx.ID_CANCEL,
+                               "Cancel",
+                               size=dip_size(self, 80, 32))
         style_button_secondary(cancel_btn)
         btn_row.Add(cancel_btn, 0, wx.RIGHT, PADDING_SM)
 
-        save_btn = wx.Button(self, wx.ID_OK, "Save Token", size=(120, 32))
+        save_btn = wx.Button(self,
+                             wx.ID_OK,
+                             "Save Token",
+                             size=dip_size(self, 120, 32))
         style_button_primary(save_btn)
         btn_row.Add(save_btn, 0)
 
@@ -188,7 +209,7 @@ class TokenRow(wx.Panel):
 
         # Status dot
         status_color = SUCCESS if self.token.enabled else TEXT_MUTED
-        dot = wx.Panel(self, size=(8, 8))
+        dot = wx.Panel(self, size=dip_size(self, 8, 8))
         dot.SetBackgroundColour(status_color)
         sizer.Add(dot, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, PADDING_MD)
 
@@ -223,19 +244,19 @@ class TokenRow(wx.Panel):
         # Buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        copy_btn = wx.Button(self, label="Copy", size=(50, 26))
+        copy_btn = wx.Button(self, label="Copy", size=dip_size(self, 50, 26))
         copy_btn.SetBackgroundColour(wx.Colour(30, 60, 50))
         copy_btn.SetForegroundColour(ACCENT)
         copy_btn.SetFont(make_font(8))
         btn_sizer.Add(copy_btn, 0, wx.RIGHT, 4)
 
-        edit_btn = wx.Button(self, label="Edit", size=(50, 26))
+        edit_btn = wx.Button(self, label="Edit", size=dip_size(self, 50, 26))
         edit_btn.SetBackgroundColour(BG_INPUT)
         edit_btn.SetForegroundColour(TEXT_PRIMARY)
         edit_btn.SetFont(make_font(8))
         btn_sizer.Add(edit_btn, 0, wx.RIGHT, 4)
 
-        del_btn = wx.Button(self, label="Del", size=(40, 26))
+        del_btn = wx.Button(self, label="Del", size=dip_size(self, 40, 26))
         del_btn.SetBackgroundColour(wx.Colour(80, 30, 30))
         del_btn.SetForegroundColour(ERROR)
         del_btn.SetFont(make_font(8))
@@ -270,7 +291,9 @@ class TokensPanel(wx.Panel):
                                "Manage API keys for gateway authentication")
         header_row.Add(header, 1, wx.EXPAND)
 
-        add_btn = wx.Button(self, label="＋  Create Token", size=(130, 34))
+        add_btn = wx.Button(self,
+                            label="＋  Create Token",
+                            size=dip_size(self, 130, 34))
         style_button_primary(add_btn)
         header_row.Add(add_btn, 0, wx.ALIGN_CENTER_VERTICAL)
 

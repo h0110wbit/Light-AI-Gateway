@@ -7,6 +7,20 @@ from src.gui.theme import *
 from src.gui.widgets import *
 from src.models.config import ChannelConfig
 
+
+def dip(window: wx.Window, size: int) -> int:
+    """将逻辑尺寸转换为物理像素尺寸（DPI感知）。"""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        return size
+
+
+def dip_size(window: wx.Window, width: int, height: int) -> tuple:
+    """将逻辑尺寸元组转换为物理像素尺寸（DPI感知）。"""
+    return (dip(window, width), dip(window, height))
+
+
 CHANNEL_TYPES = ["openai", "anthropic", "gemini", "ollama", "custom"]
 DEFAULT_URLS = {
     "openai": "https://api.openai.com",
@@ -24,7 +38,7 @@ class ChannelDialog(wx.Dialog):
         title = "Edit Channel" if channel else "Add Channel"
         super().__init__(parent,
                          title=title,
-                         size=(520, 560),
+                         size=dip_size(parent, 520, 560),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.channel = channel
         self.SetBackgroundColour(BG_PANEL)
@@ -69,7 +83,7 @@ class ChannelDialog(wx.Dialog):
         self.type_choice.SetFont(make_font(9))
         self.type_choice.SetBackgroundColour(BG_INPUT)
         self.type_choice.SetForegroundColour(TEXT_PRIMARY)
-        self.type_choice.SetMinSize((-1, 30))
+        self.type_choice.SetMinSize(dip_size(type_panel, -1, 30))
         type_sizer.Add(self.type_choice, 0, wx.EXPAND)
 
         type_panel.SetSizer(type_sizer)
@@ -112,7 +126,7 @@ class ChannelDialog(wx.Dialog):
         self.priority_spin = wx.SpinCtrl(prio_panel, value="1", min=1, max=100)
         self.priority_spin.SetBackgroundColour(BG_INPUT)
         self.priority_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.priority_spin.SetMinSize((-1, 30))
+        self.priority_spin.SetMinSize(dip_size(prio_panel, -1, 30))
         prio_sizer.Add(self.priority_spin, 0, wx.EXPAND)
 
         prio_panel.SetSizer(prio_sizer)
@@ -134,7 +148,7 @@ class ChannelDialog(wx.Dialog):
                                         max=600)
         self.timeout_spin.SetBackgroundColour(BG_INPUT)
         self.timeout_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.timeout_spin.SetMinSize((-1, 30))
+        self.timeout_spin.SetMinSize(dip_size(timeout_panel, -1, 30))
         timeout_sizer.Add(self.timeout_spin, 0, wx.EXPAND)
 
         timeout_panel.SetSizer(timeout_sizer)
@@ -165,14 +179,17 @@ class ChannelDialog(wx.Dialog):
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         btn_row.AddStretchSpacer()
 
-        cancel_btn = wx.Button(self, wx.ID_CANCEL, "Cancel", size=(80, 32))
+        cancel_btn = wx.Button(self,
+                               wx.ID_CANCEL,
+                               "Cancel",
+                               size=dip_size(self, 80, 32))
         style_button_secondary(cancel_btn)
         btn_row.Add(cancel_btn, 0, wx.RIGHT, PADDING_SM)
 
         self.save_btn = wx.Button(self,
                                   wx.ID_OK,
                                   "Save Channel",
-                                  size=(120, 32))
+                                  size=dip_size(self, 120, 32))
         style_button_primary(self.save_btn)
         btn_row.Add(self.save_btn, 0)
 
@@ -249,7 +266,7 @@ class ChannelRow(wx.Panel):
         sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Status indicator (clickable for toggle)
-        self.status_dot = wx.Panel(self, size=(8, 8))
+        self.status_dot = wx.Panel(self, size=dip_size(self, 8, 8))
         self._update_status_color()
         sizer.Add(self.status_dot, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT,
                   PADDING_MD)
@@ -301,19 +318,21 @@ class ChannelRow(wx.Panel):
         toggle_color = wx.Colour(
             30, 80, 50) if self.channel.enabled else wx.Colour(60, 50, 40)
         toggle_fg = SUCCESS if self.channel.enabled else TEXT_MUTED
-        self.toggle_btn = wx.Button(self, label=toggle_label, size=(40, 26))
+        self.toggle_btn = wx.Button(self,
+                                    label=toggle_label,
+                                    size=dip_size(self, 40, 26))
         self.toggle_btn.SetBackgroundColour(toggle_color)
         self.toggle_btn.SetForegroundColour(toggle_fg)
         self.toggle_btn.SetFont(make_font(8, bold=True))
         btn_sizer.Add(self.toggle_btn, 0, wx.RIGHT, 4)
 
-        edit_btn = wx.Button(self, label="Edit", size=(50, 26))
+        edit_btn = wx.Button(self, label="Edit", size=dip_size(self, 50, 26))
         edit_btn.SetBackgroundColour(BG_INPUT)
         edit_btn.SetForegroundColour(TEXT_PRIMARY)
         edit_btn.SetFont(make_font(8))
         btn_sizer.Add(edit_btn, 0, wx.RIGHT, 4)
 
-        del_btn = wx.Button(self, label="Del", size=(40, 26))
+        del_btn = wx.Button(self, label="Del", size=dip_size(self, 40, 26))
         del_btn.SetBackgroundColour(wx.Colour(80, 30, 30))
         del_btn.SetForegroundColour(ERROR)
         del_btn.SetFont(make_font(8))
@@ -376,7 +395,9 @@ class ChannelsPanel(wx.Panel):
                                "Configure upstream AI provider connections")
         header_row.Add(header, 1, wx.EXPAND)
 
-        add_btn = wx.Button(self, label="＋  Add Channel", size=(130, 34))
+        add_btn = wx.Button(self,
+                            label="＋  Add Channel",
+                            size=dip_size(self, 130, 34))
         style_button_primary(add_btn)
         header_row.Add(add_btn, 0, wx.ALIGN_CENTER_VERTICAL)
 
@@ -416,6 +437,10 @@ class ChannelsPanel(wx.Panel):
         self.Layout()
 
     def _render_channels(self, channels):
+        """
+        Render the channel list sorted by priority (highest first).
+        Priority 1 is highest, so we sort in ascending order.
+        """
         # Clear existing rows (except empty label)
         for child in list(self.scroll.GetChildren()):
             if isinstance(child, ChannelRow):
@@ -427,7 +452,9 @@ class ChannelsPanel(wx.Panel):
             self.list_sizer.Add(self.empty_label, 0, wx.ALL, PADDING_XL)
         else:
             self.empty_label.Hide()
-            for i, ch in enumerate(channels):
+            # Sort channels by priority (ascending - lower number = higher priority)
+            sorted_channels = sorted(channels, key=lambda ch: ch.priority)
+            for i, ch in enumerate(sorted_channels):
                 row = ChannelRow(
                     self.scroll,
                     ch,

@@ -6,6 +6,19 @@ import wx.lib.scrolledpanel as scrolled
 from src.gui.theme import *
 
 
+def dip(window: wx.Window, size: int) -> int:
+    """将逻辑尺寸转换为物理像素尺寸（DPI感知）。"""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        return size
+
+
+def dip_size(window: wx.Window, width: int, height: int) -> tuple:
+    """将逻辑尺寸元组转换为物理像素尺寸（DPI感知）。"""
+    return (dip(window, width), dip(window, height))
+
+
 class DarkPanel(wx.Panel):
     """A panel with dark theme applied"""
 
@@ -71,7 +84,7 @@ class StatusBadge(wx.Panel):
     }
 
     def __init__(self, parent, status: str = "stopped", label: str = ""):
-        super().__init__(parent, size=(-1, 24))
+        super().__init__(parent, size=dip_size(parent, -1, 24))
         self.SetBackgroundColour(BG_PANEL)
         self._status = status
         self._label = label
@@ -93,8 +106,8 @@ class StatusBadge(wx.Panel):
         w, h = self.GetSize()
 
         # Draw dot
-        dot_r = 5
-        dot_x = dot_r + 2
+        dot_r = dip(self, 5)
+        dot_x = dot_r + dip(self, 2)
         dot_y = h // 2
         gc.SetBrush(gc.CreateBrush(wx.Brush(color)))
         gc.SetPen(gc.CreatePen(wx.Pen(wx.TRANSPARENT_PEN)))
@@ -104,7 +117,7 @@ class StatusBadge(wx.Panel):
         label = self._label or self._status.upper()
         gc.SetFont(gc.CreateFont(make_font(9, bold=True), color))
         tw, th = gc.GetTextExtent(label)
-        gc.DrawText(label, dot_x + dot_r + 6, (h - th) / 2)
+        gc.DrawText(label, dot_x + dot_r + dip(self, 6), (h - th) / 2)
 
 
 class LabeledInput(wx.Panel):
@@ -138,9 +151,9 @@ class LabeledInput(wx.Panel):
         self.ctrl = wx.TextCtrl(self, value=value, style=style)
         style_text_ctrl(self.ctrl)
         if multiline:
-            self.ctrl.SetMinSize((-1, 80))
+            self.ctrl.SetMinSize(dip_size(self, -1, 80))
         else:
-            self.ctrl.SetMinSize((-1, 30))
+            self.ctrl.SetMinSize(dip_size(self, -1, 30))
         sizer.Add(self.ctrl, 1 if multiline else 0, wx.EXPAND)
 
         self.SetSizer(sizer)
@@ -156,7 +169,7 @@ class ToggleSwitch(wx.Panel):
     """A toggle switch widget"""
 
     def __init__(self, parent, label: str = "", value: bool = True):
-        super().__init__(parent, size=(-1, 28))
+        super().__init__(parent, size=dip_size(parent, -1, 28))
         self.SetBackgroundColour(BG_PANEL)
         self._value = value
         self._label = label
@@ -170,7 +183,7 @@ class ToggleSwitch(wx.Panel):
         self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self._set_hover(False))
 
         # Reserve space for switch + label
-        self.SetMinSize((100, 28))
+        self.SetMinSize(dip_size(self, 100, 28))
 
     def _set_hover(self, val: bool):
         self._hover = val
@@ -200,8 +213,8 @@ class ToggleSwitch(wx.Panel):
         w, h = self.GetSize()
 
         # Track dimensions
-        track_w = 40
-        track_h = 20
+        track_w = dip(self, 40)
+        track_h = dip(self, 20)
         track_x = 0
         track_y = (h - track_h) // 2
         radius = track_h // 2
@@ -213,9 +226,9 @@ class ToggleSwitch(wx.Panel):
         gc.DrawRoundedRectangle(track_x, track_y, track_w, track_h, radius)
 
         # Thumb
-        thumb_r = track_h // 2 - 2
-        thumb_x = track_x + (track_w - track_h +
-                             2) + 1 if self._value else track_x + 2
+        thumb_r = track_h // 2 - dip(self, 2)
+        thumb_x = track_x + (track_w - track_h + dip(self, 2)
+                             ) + 1 if self._value else track_x + dip(self, 2)
         thumb_y = track_y + track_h // 2
         gc.SetBrush(gc.CreateBrush(wx.Brush(wx.WHITE)))
         gc.DrawEllipse(thumb_x, thumb_y - thumb_r, thumb_r * 2, thumb_r * 2)
@@ -224,7 +237,7 @@ class ToggleSwitch(wx.Panel):
         if self._label:
             gc.SetFont(gc.CreateFont(make_font(9), TEXT_PRIMARY))
             tw, th = gc.GetTextExtent(self._label)
-            gc.DrawText(self._label, track_w + 8, (h - th) / 2)
+            gc.DrawText(self._label, track_w + dip(self, 8), (h - th) / 2)
 
 
 class LogPanel(wx.Panel):
@@ -264,9 +277,9 @@ class Divider(wx.Panel):
     """A horizontal divider line"""
 
     def __init__(self, parent):
-        super().__init__(parent, size=(-1, 1))
+        super().__init__(parent, size=dip_size(parent, -1, 1))
         self.SetBackgroundColour(BORDER)
-        self.SetMinSize((-1, 1))
+        self.SetMinSize(dip_size(self, -1, 1))
 
 
 class IconButton(wx.Button):
@@ -277,7 +290,7 @@ class IconButton(wx.Button):
                  label: str,
                  color: wx.Colour = None,
                  tooltip: str = ""):
-        super().__init__(parent, label=label, size=(-1, 28))
+        super().__init__(parent, label=label, size=dip_size(parent, -1, 28))
         bg = color or BG_CARD
         self.SetBackgroundColour(bg)
         self.SetForegroundColour(TEXT_PRIMARY)

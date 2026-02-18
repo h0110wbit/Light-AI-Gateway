@@ -2,6 +2,33 @@
 Main wxPython Application entry point
 """
 import wx
+import sys
+
+
+def enable_high_dpi():
+    """
+    启用高DPI感知模式，确保应用程序在不同DPI设置下正确显示。
+    必须在创建 wx.App 之前调用。
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+    if "wxMSW" in wx.PlatformInfo:
+        try:
+            wx.EnableDPIAware()
+        except Exception:
+            pass
+
+
+enable_high_dpi()
+
 from src.gui.main_frame import MainFrame
 
 

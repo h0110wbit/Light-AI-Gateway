@@ -7,6 +7,19 @@ from src.gui.theme import *
 from src.gui.widgets import *
 
 
+def dip(window: wx.Window, size: int) -> int:
+    """将逻辑尺寸转换为物理像素尺寸（DPI感知）。"""
+    try:
+        return window.FromDIP(size)
+    except AttributeError:
+        return size
+
+
+def dip_size(window: wx.Window, width: int, height: int) -> tuple:
+    """将逻辑尺寸元组转换为物理像素尺寸（DPI感知）。"""
+    return (dip(window, width), dip(window, height))
+
+
 class DashboardPanel(wx.Panel):
     """Main dashboard panel showing server status"""
 
@@ -126,13 +139,13 @@ class DashboardPanel(wx.Panel):
 
         self.start_btn = wx.Button(btn_panel,
                                    label="▶  Start Gateway",
-                                   size=(160, 40))
+                                   size=dip_size(btn_panel, 160, 40))
         style_button_primary(self.start_btn)
         btn_sizer.Add(self.start_btn, 0, wx.RIGHT, PADDING_SM)
 
         self.stop_btn = wx.Button(btn_panel,
                                   label="■  Stop Gateway",
-                                  size=(160, 40))
+                                  size=dip_size(btn_panel, 160, 40))
         style_button_secondary(self.stop_btn)
         self.stop_btn.SetBackgroundColour(BG_CARD)
         self.stop_btn.Enable(False)
@@ -140,7 +153,7 @@ class DashboardPanel(wx.Panel):
 
         self.restart_btn = wx.Button(btn_panel,
                                      label="↺  Restart",
-                                     size=(120, 40))
+                                     size=dip_size(btn_panel, 160, 40))
         style_button_secondary(self.restart_btn)
         self.restart_btn.Enable(False)
         btn_sizer.Add(self.restart_btn, 0)
@@ -174,7 +187,7 @@ class DashboardPanel(wx.Panel):
             card_sizer.Add(title_lbl, 0, wx.LEFT | wx.BOTTOM, PADDING_MD)
 
             card.SetSizer(card_sizer)
-            card.SetMinSize((120, 100))
+            card.SetMinSize(dip_size(card, 120, 100))
             return card
 
         stats_row.Add(
@@ -199,7 +212,9 @@ class DashboardPanel(wx.Panel):
 
         log_header_row.AddStretchSpacer()
 
-        clear_btn = wx.Button(content, label="Clear", size=(60, 24))
+        clear_btn = wx.Button(content,
+                              label="Clear",
+                              size=dip_size(content, 60, 24))
         style_button_secondary(clear_btn)
         clear_btn.SetFont(make_font(8))
         log_header_row.Add(clear_btn, 0)
@@ -209,7 +224,7 @@ class DashboardPanel(wx.Panel):
                           PADDING_MD)
 
         self.log_panel = LogPanel(content)
-        self.log_panel.SetMinSize((-1, 180))
+        self.log_panel.SetMinSize(dip_size(content, -1, 180))
         content_sizer.Add(self.log_panel, 1,
                           wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
                           PADDING_MD)

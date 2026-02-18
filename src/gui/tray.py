@@ -29,6 +29,31 @@ def get_icon_path() -> str:
     return os.path.join(base_dir, "resources", "icon.ico")
 
 
+def get_tray_icon_size() -> int:
+    """
+    获取系统托盘图标的推荐尺寸。
+    在高DPI显示器上返回更大的尺寸以确保图标清晰。
+    """
+    try:
+        # 获取系统推荐的托盘图标尺寸
+        size_info = wx.adv.TaskBarIcon.GetSystemIconSize()
+        if size_info:
+            return max(size_info[0], size_info[1])
+    except Exception:
+        pass
+    
+    # 备用方案：根据DPI缩放计算
+    try:
+        scale_factor = wx.GetDisplayPPI()[0] / 96.0
+        base_size = 16
+        return int(base_size * scale_factor)
+    except Exception:
+        pass
+    
+    # 默认返回较大尺寸以确保在高DPI下清晰
+    return 32
+
+
 class SystemTrayIcon(wx.adv.TaskBarIcon):
     """
     System tray icon with context menu for quick actions.
@@ -52,28 +77,50 @@ class SystemTrayIcon(wx.adv.TaskBarIcon):
         icon = self._load_icon()
         self.SetIcon(icon, "AI Gateway")
 
-    def _load_icon(self, size: int = 16) -> wx.Icon:
-        """Load icon from file, fallback to generated icon if not found"""
+    def _load_icon(self) -> wx.Icon:
+        """
+        Load icon from file with appropriate size for system tray.
+        Uses larger icon size for high DPI displays.
+        """
+        # 获取适合当前DPI的图标尺寸
+        target_size = get_tray_icon_size()
+        
         if os.path.exists(self._icon_path):
-            # Load from file
+            # Load from file - ICO files can contain multiple sizes
             img = wx.Image(self._icon_path, wx.BITMAP_TYPE_ICO)
             if img.IsOk():
-                # Scale to appropriate size for tray
-                img = img.Scale(size, size, wx.IMAGE_QUALITY_HIGH)
+                # 获取原始尺寸
+                orig_w, orig_h = img.GetWidth(), img.GetHeight()
+                
+                # 如果原始图像足够大，直接缩放到目标尺寸
+                if orig_w >= target_size:
+                    img = img.Scale(target_size, target_size, wx.IMAGE_QUALITY_HIGH)
+                else:
+                    # 如果原始图像较小，尝试放大但保持质量
+                    img = img.Scale(target_size, target_size, wx.IMAGE_QUALITY_HIGH)
+                
                 return wx.Icon(img.ConvertToBitmap())
 
-        # Fallback: create a simple icon
-        return self._create_fallback_icon()
+        # Fallback: create a simple icon with proper size
+        return self._create_fallback_icon(target_size)
 
-    def _create_fallback_icon(self) -> wx.Icon:
-        """Create a simple fallback icon if icon file is not found"""
-        bmp = wx.Bitmap(16, 16)
+    def _create_fallback_icon(self, size: int = 32) -> wx.Icon:
+        """
+        Create a simple fallback icon if icon file is not found.
+        
+        Args:
+            size: The size of the icon to create
+        """
+        bmp = wx.Bitmap(size, size)
         dc = wx.MemoryDC(bmp)
         dc.SetBackground(wx.Brush(wx.Colour(18, 18, 24)))
         dc.Clear()
         dc.SetBrush(wx.Brush(ACCENT))
         dc.SetPen(wx.Pen(ACCENT))
-        dc.DrawCircle(8, 8, 6)
+        # 按比例绘制圆形
+        center = size // 2
+        radius = int(size * 0.375)
+        dc.DrawCircle(center, center, radius)
         dc.SelectObject(wx.NullBitmap)
         return wx.Icon(bmp)
 
