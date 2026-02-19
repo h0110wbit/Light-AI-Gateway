@@ -345,17 +345,30 @@ class ProxyEngine:
         # Get model from request
         model = body.get("model", "")
 
-        # Check token model permissions
-        if token_config and token_config.allowed_models and model:
-            model_lower = model.lower()
-            allowed_lower = [m.lower() for m in token_config.allowed_models]
-            if model_lower not in allowed_lower:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Model '{model}' not allowed for this token")
+        # Check if high availability mode is enabled
+        high_availability = self.config.settings.high_availability_mode
 
-        # Find suitable channels
-        channels = self.config.get_channels_for_model(model)
+        if high_availability:
+            # In high availability mode, ignore model parameter
+            # Get all enabled channels regardless of model support
+            channels = self.config.get_enabled_channels()
+            logger.info(
+                f"High availability mode enabled - routing to any available channel"
+            )
+        else:
+            # Check token model permissions
+            if token_config and token_config.allowed_models and model:
+                model_lower = model.lower()
+                allowed_lower = [
+                    m.lower() for m in token_config.allowed_models
+                ]
+                if model_lower not in allowed_lower:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Model '{model}' not allowed for this token")
+
+            # Find suitable channels
+            channels = self.config.get_channels_for_model(model)
 
         # Filter by token channel permissions
         if token_config and token_config.allowed_channels:
@@ -364,9 +377,14 @@ class ProxyEngine:
             ]
 
         if not channels:
-            raise HTTPException(
-                status_code=503,
-                detail=f"No available channels for model '{model}'")
+            if high_availability:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No available channels in high availability mode")
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"No available channels for model '{model}'")
 
         # Try channels in priority order with fallback
         last_error = None
@@ -374,7 +392,8 @@ class ProxyEngine:
             try:
                 return await self._forward_to_channel(request, channel,
                                                       endpoint_type, body,
-                                                      source_format)
+                                                      source_format,
+                                                      high_availability)
             except HTTPException as e:
                 if e.status_code in (401, 403):
                     raise  # Don't retry auth errors
@@ -404,6 +423,7 @@ class ProxyEngine:
         endpoint_type: str,
         body: dict,
         source_format: str = "openai",
+        high_availability: bool = False,
     ) -> Union[StreamingResponse, JSONResponse]:
         """
         Forward request to a specific channel.
@@ -414,8 +434,19 @@ class ProxyEngine:
             endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
             body: Request body
             source_format: Format of the incoming request (openai, anthropic, gemini)
+            high_availability: Whether high availability mode is enabled
         """
         target_format = channel.type.lower()
+
+        # In high availability mode, replace model with channel's supported model
+        if high_availability and channel.models:
+            # Use the first model from channel's model list
+            replacement_model = channel.models[0]
+            body = dict(body)  # Create a copy to avoid modifying original
+            body["model"] = replacement_model
+            logger.info(
+                f"High availability mode: replaced model with '{replacement_model}' for channel '{channel.name}'"
+            )
 
         # Transform request body from source format to target format
         upstream_body, model, extra_info = FormatConverter.transform_request(

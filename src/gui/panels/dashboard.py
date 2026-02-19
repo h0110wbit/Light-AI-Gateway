@@ -162,6 +162,45 @@ class DashboardPanel(wx.Panel):
         content_sizer.Add(btn_panel, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM,
                           PADDING_MD)
 
+        # ── High availability mode toggle ─────────────────────────────────────
+        ha_panel = wx.Panel(content)
+        ha_panel.SetBackgroundColour(BG_CARD)
+        ha_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        ha_icon = wx.StaticText(ha_panel, label="⚡")
+        ha_icon.SetFont(make_font(14))
+        ha_icon.SetForegroundColour(ACCENT)
+        ha_sizer.Add(ha_icon, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT,
+                     PADDING_MD)
+
+        ha_text_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        ha_title = wx.StaticText(ha_panel, label="High Availability Mode")
+        ha_title.SetFont(make_font(10, bold=True))
+        ha_title.SetForegroundColour(TEXT_PRIMARY)
+        ha_text_sizer.Add(ha_title, 0)
+
+        ha_desc = wx.StaticText(
+            ha_panel,
+            label="Ignore model parameter, route to any available channel")
+        ha_desc.SetFont(make_font(8))
+        ha_desc.SetForegroundColour(TEXT_SECONDARY)
+        ha_text_sizer.Add(ha_desc, 0)
+
+        ha_sizer.Add(ha_text_sizer, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT,
+                     PADDING_SM)
+        ha_sizer.AddStretchSpacer()
+
+        self.ha_toggle = ToggleSwitch(ha_panel, label="", value=False)
+        self.ha_toggle.SetMinSize(dip_size(ha_panel, 50, 28))
+        ha_sizer.Add(self.ha_toggle, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+                     PADDING_MD)
+
+        ha_panel.SetSizer(ha_sizer)
+        content_sizer.Add(ha_panel, 0,
+                          wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+                          PADDING_MD)
+
         # ── Quick stats cards ─────────────────────────────────────────────────
         stats_row = wx.BoxSizer(wx.HORIZONTAL)
 
@@ -241,6 +280,7 @@ class DashboardPanel(wx.Panel):
         self.start_btn.Bind(wx.EVT_BUTTON, self.on_start)
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
         self.restart_btn.Bind(wx.EVT_BUTTON, self.on_restart)
+        self.ha_toggle.Bind(wx.EVT_CHECKBOX, self.on_toggle_high_availability)
 
     def on_start(self, event):
         self.controller.start_server()
@@ -250,6 +290,11 @@ class DashboardPanel(wx.Panel):
 
     def on_restart(self, event):
         self.controller.restart_server()
+
+    def on_toggle_high_availability(self, event):
+        """Handle high availability mode toggle"""
+        new_state = self.controller.toggle_high_availability()
+        self.ha_toggle.SetValue(new_state)
 
     def set_running(self, running: bool, config=None):
         """Update UI state based on server running status"""
@@ -267,6 +312,8 @@ class DashboardPanel(wx.Panel):
                 self.endpoint_label.SetLabel(
                     f"http://{display_host}:{port}/v1")
                 self.endpoint_label.SetForegroundColour(ACCENT)
+                # Initialize high availability toggle state
+                self.ha_toggle.SetValue(config.settings.high_availability_mode)
         else:
             self.status_badge.set_status("stopped", "STOPPED")
             self.addr_label.SetLabel("—")
@@ -274,6 +321,11 @@ class DashboardPanel(wx.Panel):
             self.endpoint_label.SetForegroundColour(TEXT_MUTED)
 
         self.Layout()
+
+    def init_ha_state(self):
+        """Initialize high availability toggle state from config"""
+        ha_enabled = self.controller.is_high_availability_enabled()
+        self.ha_toggle.SetValue(ha_enabled)
 
     def update_stats(self, channels: int, tokens: int, models: int):
         """Update the quick stats display"""

@@ -239,6 +239,23 @@ class GatewayController:
             if not is_auto_start_enabled():
                 set_auto_start(True)
 
+    def toggle_high_availability(self) -> bool:
+        """
+        Toggle high availability mode.
+        
+        Returns:
+            The new state of high availability mode
+        """
+        self._config.settings.high_availability_mode = not self._config.settings.high_availability_mode
+        self._save()
+        status = "enabled" if self._config.settings.high_availability_mode else "disabled"
+        self._log(f"High availability mode {status}", "success")
+        return self._config.settings.high_availability_mode
+
+    def is_high_availability_enabled(self) -> bool:
+        """Check if high availability mode is enabled"""
+        return self._config.settings.high_availability_mode
+
     # ─── Stats ──────────────────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:

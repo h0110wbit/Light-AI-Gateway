@@ -76,6 +76,8 @@ class GatewaySettings(BaseModel):
     cors_origins: List[str] = ["*"]
     # Auto start on Windows login (create registry entry)
     auto_start: bool = False
+    # High availability mode: ignore model parameter and route to any available channel
+    high_availability_mode: bool = False
 
 
 class AppConfig(BaseModel):

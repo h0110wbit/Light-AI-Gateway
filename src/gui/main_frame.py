@@ -328,6 +328,9 @@ class MainFrame(wx.Frame):
         # Show only dashboard initially
         self._show_panel("dashboard")
 
+        # Initialize high availability toggle state
+        self.dashboard.init_ha_state()
+
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 

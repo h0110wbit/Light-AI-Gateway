@@ -192,10 +192,11 @@ class ToggleSwitch(wx.Panel):
     def _on_click(self, event):
         self._value = not self._value
         self.Refresh()
-        # Send event
+        # Send event to self
         evt = wx.CommandEvent(wx.EVT_CHECKBOX.typeId, self.GetId())
         evt.SetInt(1 if self._value else 0)
-        wx.PostEvent(self.GetParent(), evt)
+        evt.SetEventObject(self)
+        wx.PostEvent(self, evt)
 
     def GetValue(self) -> bool:
         return self._value
