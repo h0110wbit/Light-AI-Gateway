@@ -38,7 +38,7 @@ class ChannelDialog(wx.Dialog):
         title = "Edit Channel" if channel else "Add Channel"
         super().__init__(parent,
                          title=title,
-                         size=dip_size(parent, 520, 680),
+                         size=dip_size(parent, 520, 580),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.channel = channel
         self.SetBackgroundColour(BG_PANEL)
@@ -80,10 +80,7 @@ class ChannelDialog(wx.Dialog):
         self.type_choice = wx.Choice(
             type_panel, choices=[t.upper() for t in CHANNEL_TYPES])
         self.type_choice.SetSelection(0)
-        self.type_choice.SetFont(make_font(9))
-        self.type_choice.SetBackgroundColour(BG_INPUT)
-        self.type_choice.SetForegroundColour(TEXT_PRIMARY)
-        self.type_choice.SetMinSize(dip_size(type_panel, -1, 30))
+        style_choice(self.type_choice)
         type_sizer.Add(self.type_choice, 0, wx.EXPAND)
 
         type_panel.SetSizer(type_sizer)
@@ -124,9 +121,7 @@ class ChannelDialog(wx.Dialog):
         prio_sizer.Add(prio_lbl, 0, wx.BOTTOM, 4)
 
         self.priority_spin = wx.SpinCtrl(prio_panel, value="1", min=1, max=100)
-        self.priority_spin.SetBackgroundColour(BG_INPUT)
-        self.priority_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.priority_spin.SetMinSize(dip_size(prio_panel, -1, 30))
+        style_spin_ctrl(self.priority_spin)
         prio_sizer.Add(self.priority_spin, 0, wx.EXPAND)
 
         prio_panel.SetSizer(prio_sizer)
@@ -146,9 +141,7 @@ class ChannelDialog(wx.Dialog):
                                         value="60",
                                         min=5,
                                         max=600)
-        self.timeout_spin.SetBackgroundColour(BG_INPUT)
-        self.timeout_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.timeout_spin.SetMinSize(dip_size(timeout_panel, -1, 30))
+        style_spin_ctrl(self.timeout_spin)
         timeout_sizer.Add(self.timeout_spin, 0, wx.EXPAND)
 
         timeout_panel.SetSizer(timeout_sizer)
@@ -157,6 +150,37 @@ class ChannelDialog(wx.Dialog):
         row_panel.SetSizer(row_sizer)
         form.Add(row_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
                  PADDING_MD)
+
+        # Max Concurrency row
+        concurrency_panel = wx.Panel(scroll)
+        concurrency_panel.SetBackgroundColour(BG_PANEL)
+        concurrency_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        concurrency_lbl = wx.StaticText(
+            concurrency_panel, label="MAX CONCURRENCY (0 = adaptive mode)")
+        concurrency_lbl.SetFont(make_font(8, bold=True))
+        concurrency_lbl.SetForegroundColour(TEXT_SECONDARY)
+        concurrency_sizer.Add(concurrency_lbl, 0, wx.BOTTOM, 4)
+
+        concurrency_hint = wx.StaticText(
+            concurrency_panel,
+            label=
+            "Set 0 for adaptive mode (auto-adjust based on response time & error rate), or set a fixed value."
+        )
+        concurrency_hint.SetFont(make_font(7))
+        concurrency_hint.SetForegroundColour(TEXT_MUTED)
+        concurrency_sizer.Add(concurrency_hint, 0, wx.BOTTOM, 4)
+
+        self.concurrency_spin = wx.SpinCtrl(concurrency_panel,
+                                            value="0",
+                                            min=0,
+                                            max=1000)
+        style_spin_ctrl(self.concurrency_spin)
+        concurrency_sizer.Add(self.concurrency_spin, 0, wx.EXPAND)
+
+        concurrency_panel.SetSizer(concurrency_sizer)
+        form.Add(concurrency_panel, 0,
+                 wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, PADDING_MD)
 
         # Enabled toggle
         self.enabled_check = wx.CheckBox(scroll, label="Channel Enabled")
@@ -258,6 +282,7 @@ class ChannelDialog(wx.Dialog):
         self.priority_spin.SetValue(ch.priority)
         self.timeout_spin.SetValue(ch.timeout)
         self.enabled_check.SetValue(ch.enabled)
+        self.concurrency_spin.SetValue(ch.max_concurrency or 0)
         self.proxy_enabled_check.SetValue(ch.proxy_enabled)
         self.proxy_input.Enable(ch.proxy_enabled)
         if ch.proxy_url:
@@ -296,6 +321,8 @@ class ChannelDialog(wx.Dialog):
             self.timeout_spin.GetValue(),
             "enabled":
             self.enabled_check.GetValue(),
+            "max_concurrency":
+            self.concurrency_spin.GetValue(),
             "proxy_enabled":
             self.proxy_enabled_check.GetValue(),
             "proxy_url":

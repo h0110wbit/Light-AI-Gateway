@@ -78,7 +78,6 @@ class TokenDialog(wx.Dialog):
         key_row = wx.BoxSizer(wx.HORIZONTAL)
         self.key_ctrl = wx.TextCtrl(key_panel, value=generate_token())
         style_text_ctrl(self.key_ctrl)
-        self.key_ctrl.SetMinSize(dip_size(key_panel, -1, 30))
         key_row.Add(self.key_ctrl, 1, wx.EXPAND | wx.RIGHT, PADDING_SM)
 
         gen_btn = wx.Button(key_panel,
@@ -108,7 +107,6 @@ class TokenDialog(wx.Dialog):
 
         self.models_ctrl = wx.TextCtrl(models_panel)
         style_text_ctrl(self.models_ctrl)
-        self.models_ctrl.SetMinSize(dip_size(models_panel, -1, 30))
         models_sizer.Add(self.models_ctrl, 0, wx.EXPAND)
 
         hint = wx.StaticText(models_panel,

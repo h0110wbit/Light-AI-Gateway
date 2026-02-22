@@ -152,8 +152,6 @@ class LabeledInput(wx.Panel):
         style_text_ctrl(self.ctrl)
         if multiline:
             self.ctrl.SetMinSize(dip_size(self, -1, 80))
-        else:
-            self.ctrl.SetMinSize(dip_size(self, -1, 30))
         sizer.Add(self.ctrl, 1 if multiline else 0, wx.EXPAND)
 
         self.SetSizer(sizer)

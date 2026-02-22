@@ -8,6 +8,7 @@ import httpx
 import asyncio
 import json
 import logging
+import time
 from typing import AsyncGenerator, Optional, Tuple, Union
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -19,6 +20,11 @@ from src.core.converter import (
     transform_stream_chunk_from_provider,
     FormatConverter,
     ProviderType,
+)
+from src.core.rate_limiter import (
+    RateLimiterManager,
+    RateLimitConfig,
+    RateLimitContext,
 )
 
 logger = logging.getLogger("ai-gateway.proxy")
@@ -244,6 +250,7 @@ class ProxyEngine:
         self.config = config
         self._client: Optional[httpx.AsyncClient] = None
         self._proxy_clients: dict = {}
+        self._rate_limiter_manager = RateLimiterManager()
 
     def update_config(self, config: AppConfig):
         self.config = config
@@ -255,6 +262,113 @@ class ProxyEngine:
             if not client.is_closed:
                 asyncio.create_task(client.aclose())
         self._proxy_clients.clear()
+
+    def _get_rate_limit_config(self,
+                               channel: ChannelConfig) -> RateLimitConfig:
+        """
+        Build rate limit configuration from channel settings.
+        
+        Args:
+            channel: Channel configuration
+            
+        Returns:
+            RateLimitConfig instance
+        """
+        return RateLimitConfig(
+            max_concurrency=channel.max_concurrency,
+            min_concurrency=channel.min_concurrency,
+            max_adaptive_concurrency=channel.max_adaptive_concurrency,
+            response_time_low=channel.response_time_low,
+            response_time_high=channel.response_time_high,
+            error_rate_threshold=channel.error_rate_threshold,
+            increase_step=channel.increase_step,
+            decrease_factor=channel.decrease_factor,
+            stats_window_size=channel.stats_window_size,
+            cooldown_seconds=channel.cooldown_seconds,
+        )
+
+    async def _get_limiter_for_channel(self, channel: ChannelConfig):
+        """
+        Get or create a rate limiter for a channel.
+        
+        Args:
+            channel: Channel configuration
+            
+        Returns:
+            AdaptiveLimiter instance
+        """
+        config = self._get_rate_limit_config(channel)
+        return await self._rate_limiter_manager.get_or_create_limiter(
+            channel.id, channel.name, config)
+
+    def _is_channel_healthy(self, channel: ChannelConfig) -> bool:
+        """
+        Check if a channel is healthy based on recent statistics.
+        
+        A channel is considered unhealthy if:
+        - Error rate is above 50% in recent requests
+        - Or average response time is above 30 seconds
+        
+        Args:
+            channel: Channel configuration
+            
+        Returns:
+            True if channel is healthy, False otherwise
+        """
+        limiter = self._rate_limiter_manager.get_limiter(channel.id)
+        if not limiter:
+            return True
+
+        stats = limiter.stats
+        if stats.sample_count < 5:
+            return True
+
+        if stats.error_rate > 0.5:
+            return False
+
+        if stats.avg_response_time > 30.0:
+            return False
+
+        return True
+
+    def _get_healthy_channels(self,
+                              channels: list,
+                              high_availability: bool = False) -> list:
+        """
+        Filter and sort channels by health status.
+        
+        Returns channels sorted by:
+        1. Health status (healthy first)
+        2. Priority (lower number first)
+        3. Current load (fewer active requests first)
+        
+        Args:
+            channels: List of channel configurations
+            high_availability: Whether high availability mode is enabled
+            
+        Returns:
+            Sorted list of channels
+        """
+        healthy = []
+        unhealthy = []
+
+        for ch in channels:
+            if self._is_channel_healthy(ch):
+                limiter = self._rate_limiter_manager.get_limiter(ch.id)
+                load = 0
+                if limiter:
+                    load = limiter.current_limit - (
+                        limiter._semaphore._value if limiter._semaphore else 0)
+                healthy.append((ch, load))
+            else:
+                unhealthy.append(ch)
+
+        healthy.sort(key=lambda x: (x[0].priority, x[1]))
+
+        result = [ch for ch, _ in healthy]
+        result.extend(unhealthy)
+
+        return result
 
     async def get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -386,6 +500,9 @@ class ProxyEngine:
                     status_code=503,
                     detail=f"No available channels for model '{model}'")
 
+        # Sort channels by health status for load balancing
+        channels = self._get_healthy_channels(channels, high_availability)
+
         # Try channels in priority order with fallback
         last_error = None
         for channel in channels:
@@ -426,7 +543,7 @@ class ProxyEngine:
         high_availability: bool = False,
     ) -> Union[StreamingResponse, JSONResponse]:
         """
-        Forward request to a specific channel.
+        Forward request to a specific channel with rate limiting.
         
         Args:
             request: FastAPI request object
@@ -465,54 +582,176 @@ class ProxyEngine:
         else:
             client = await self.get_client()
 
-        if is_streaming:
-            return StreamingResponse(stream_response(client, "POST", url,
-                                                     headers, upstream_body,
-                                                     channel, model,
-                                                     source_format),
-                                     media_type="text/event-stream",
-                                     headers={
-                                         "Cache-Control": "no-cache",
-                                         "X-Accel-Buffering": "no",
-                                         "Connection": "keep-alive",
-                                     })
-        else:
-            try:
-                response = await client.post(
+        # Get rate limiter for this channel
+        limiter = await self._get_limiter_for_channel(channel)
+
+        # Acquire rate limit slot
+        await limiter.acquire()
+        start_time = time.time()
+        is_error = False
+        status_code = 200
+
+        try:
+            if is_streaming:
+                return StreamingResponse(self._stream_with_rate_limit(
+                    client, "POST", url, headers, upstream_body, channel,
+                    model, source_format, limiter, start_time),
+                                         media_type="text/event-stream",
+                                         headers={
+                                             "Cache-Control": "no-cache",
+                                             "X-Accel-Buffering": "no",
+                                             "Connection": "keep-alive",
+                                         })
+            else:
+                try:
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        json=upstream_body,
+                        timeout=channel.timeout,
+                    )
+
+                    status_code = response.status_code
+                    is_error = status_code != 200
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Transform response from target format back to source format
+                        transformed = FormatConverter.transform_response(
+                            data, ProviderType(target_format),
+                            ProviderType(source_format), model)
+                        return JSONResponse(content=transformed,
+                                            status_code=200)
+                    else:
+                        error_detail = f"Upstream returned {response.status_code}"
+                        try:
+                            err_data = response.json()
+                            if "error" in err_data:
+                                error_detail = err_data["error"].get(
+                                    "message", error_detail)
+                        except Exception:
+                            pass
+                        raise HTTPException(status_code=response.status_code,
+                                            detail=error_detail)
+
+                except httpx.TimeoutException:
+                    is_error = True
+                    status_code = 504
+                    raise HTTPException(
+                        status_code=504,
+                        detail=f"Channel '{channel.name}' timed out")
+                except httpx.RequestError as e:
+                    is_error = True
+                    status_code = 502
+                    raise HTTPException(
+                        status_code=502,
+                        detail=
+                        f"Channel '{channel.name}' connection error: {str(e)}")
+        finally:
+            # Record request metrics
+            response_time = time.time() - start_time
+            limiter.record_request(response_time, is_error, status_code)
+            limiter.release()
+
+    async def _stream_with_rate_limit(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        headers: dict,
+        body: dict,
+        channel: ChannelConfig,
+        model: str,
+        source_format: str,
+        limiter,
+        start_time: float,
+    ) -> AsyncGenerator[bytes, None]:
+        """
+        Stream response from upstream provider with rate limit tracking.
+        
+        Args:
+            client: HTTP client
+            method: HTTP method
+            url: Target URL
+            headers: Request headers
+            body: Request body
+            channel: Channel configuration
+            model: Model name
+            source_format: Format of the original request
+            limiter: Rate limiter instance
+            start_time: Request start time
+        """
+        target_format = channel.type.lower()
+        is_error = False
+        status_code = 200
+
+        try:
+            async with client.stream(
+                    method,
                     url,
                     headers=headers,
-                    json=upstream_body,
+                    json=body,
                     timeout=channel.timeout,
-                )
+            ) as response:
+                status_code = response.status_code
+                is_error = status_code != 200
 
-                if response.status_code == 200:
-                    data = response.json()
-                    # Transform response from target format back to source format
-                    transformed = FormatConverter.transform_response(
-                        data, ProviderType(target_format),
-                        ProviderType(source_format), model)
-                    return JSONResponse(content=transformed, status_code=200)
-                else:
-                    error_detail = f"Upstream returned {response.status_code}"
-                    try:
-                        err_data = response.json()
-                        if "error" in err_data:
-                            error_detail = err_data["error"].get(
-                                "message", error_detail)
-                    except Exception:
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    error_text = error_body.decode('utf-8', errors='replace')
+                    yield f"data: {json.dumps({'error': error_text, 'status': response.status_code})}\n\n".encode(
+                    )
+                    yield b"data: [DONE]\n\n"
+                    return
+
+                # If source format matches target format, pass through
+                if source_format == target_format:
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                    return
+
+                # Transform stream chunks from target format to source format
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            yield b"data: [DONE]\n\n"
+                            continue
+                        try:
+                            event_data = json.loads(data_str)
+                            # Transform chunk from target format to source format
+                            transformed_chunk = FormatConverter.transform_stream_chunk(
+                                event_data, ProviderType(target_format),
+                                ProviderType(source_format), model)
+                            if transformed_chunk:
+                                yield f"data: {json.dumps(transformed_chunk)}\n\n".encode(
+                                )
+                        except json.JSONDecodeError:
+                            pass
+                    elif line.startswith("event: "):
                         pass
-                    raise HTTPException(status_code=response.status_code,
-                                        detail=error_detail)
 
-            except httpx.TimeoutException:
-                raise HTTPException(
-                    status_code=504,
-                    detail=f"Channel '{channel.name}' timed out")
-            except httpx.RequestError as e:
-                raise HTTPException(
-                    status_code=502,
-                    detail=
-                    f"Channel '{channel.name}' connection error: {str(e)}")
+                # Gemini doesn't send [DONE], so we add it
+                if target_format == "gemini":
+                    yield b"data: [DONE]\n\n"
+
+        except httpx.TimeoutException:
+            is_error = True
+            status_code = 504
+            yield f"data: {json.dumps({'error': 'Upstream request timed out'})}\n\n".encode(
+            )
+            yield b"data: [DONE]\n\n"
+        except Exception as e:
+            is_error = True
+            status_code = 500
+            yield f"data: {json.dumps({'error': str(e)})}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+        finally:
+            # Record request metrics for streaming
+            response_time = time.time() - start_time
+            limiter.record_request(response_time, is_error, status_code)
 
     async def list_models(self, token_key: Optional[str] = None) -> dict:
         """List all available models across all enabled channels"""

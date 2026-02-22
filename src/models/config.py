@@ -42,6 +42,27 @@ class ChannelConfig(BaseModel):
     proxy_enabled: bool = False
     proxy_url: str = ""  # e.g., http://127.0.0.1:7890, socks5://127.0.0.1:1080
 
+    # Rate limiting configuration
+    # None or 0 = adaptive mode, positive value = fixed mode
+    max_concurrency: Optional[int] = None
+    # Minimum concurrency in adaptive mode
+    min_concurrency: int = 1
+    # Maximum concurrency limit for adaptive mode
+    max_adaptive_concurrency: int = 100
+    # Response time thresholds for adaptive mode (seconds)
+    response_time_low: float = 1.0
+    response_time_high: float = 5.0
+    # Error rate threshold for triggering degradation
+    error_rate_threshold: float = 0.1
+    # Step size for increasing concurrency in adaptive mode
+    increase_step: int = 2
+    # Factor for decreasing concurrency (0.8 means reduce to 80%)
+    decrease_factor: float = 0.8
+    # Number of recent requests to consider for statistics
+    stats_window_size: int = 100
+    # Cooldown period between adjustments (seconds)
+    cooldown_seconds: float = 5.0
+
     @field_validator('base_url')
     @classmethod
     def normalize_base_url(cls, v):

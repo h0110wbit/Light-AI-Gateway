@@ -144,28 +144,46 @@ class FormatConverter:
         system_instruction = None
         gemini_contents = []
 
+        def extract_text_from_content(content) -> str:
+            """Extract text from content which can be string or list of parts."""
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                return " ".join(text_parts)
+            return str(content)
+
+        # Handle top-level system field (Anthropic-style)
+        if "system" in body:
+            system_instruction = extract_text_from_content(body["system"])
+
         for msg in messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
 
             if role == "system":
-                system_instruction = content
+                system_instruction = extract_text_from_content(content)
             elif role == "user":
+                text_content = extract_text_from_content(content)
                 gemini_contents.append({
-                    "role":
-                    "user",
+                    "role": "user",
                     "parts": [{
-                        "text":
-                        content if isinstance(content, str) else str(content)
+                        "text": text_content
                     }]
                 })
             elif role == "assistant":
+                text_content = extract_text_from_content(content)
                 gemini_contents.append({
-                    "role":
-                    "model",
+                    "role": "model",
                     "parts": [{
-                        "text":
-                        content if isinstance(content, str) else str(content)
+                        "text": text_content
                     }]
                 })
 
@@ -307,8 +325,10 @@ class FormatConverter:
 
                 elif block_type == "tool_use":
                     openai_parts.append({
-                        "type": "text",
-                        "text": f"[Tool use: {block.get('name', 'unknown')}]"
+                        "type":
+                        "text",
+                        "text":
+                        f"[Tool use: {block.get('name', 'unknown')}]"
                     })
 
                 elif block_type == "tool_result":
@@ -353,33 +373,48 @@ class FormatConverter:
 
         gemini_contents = []
 
+        def extract_text_from_content(content) -> str:
+            """Extract text from content which can be string or list of parts."""
+            if content is None:
+                return ""
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                return " ".join(text_parts)
+            return str(content)
+
         for msg in messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
 
             if role == "user":
+                text_content = extract_text_from_content(content)
                 gemini_contents.append({
-                    "role":
-                    "user",
+                    "role": "user",
                     "parts": [{
-                        "text":
-                        content if isinstance(content, str) else str(content)
+                        "text": text_content
                     }]
                 })
             elif role == "assistant":
+                text_content = extract_text_from_content(content)
                 gemini_contents.append({
-                    "role":
-                    "model",
+                    "role": "model",
                     "parts": [{
-                        "text":
-                        content if isinstance(content, str) else str(content)
+                        "text": text_content
                     }]
                 })
 
         result = {"contents": gemini_contents, "generationConfig": {}}
 
         if system_prompt:
-            result["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+            system_text = extract_text_from_content(system_prompt)
+            result["systemInstruction"] = {"parts": [{"text": system_text}]}
 
         if "max_tokens" in body:
             result["generationConfig"]["maxOutputTokens"] = body["max_tokens"]
@@ -410,7 +445,8 @@ class FormatConverter:
             Tuple of (openai_body, model_name, extra_info)
         """
         contents = body.get("contents", [])
-        system_instruction = body.get("systemInstruction", {})
+        system_instruction = body.get("system_instruction") or body.get(
+            "systemInstruction", {})
         generation_config = body.get("generationConfig", {})
 
         openai_messages = []
@@ -469,7 +505,8 @@ class FormatConverter:
             Tuple of (anthropic_body, model_name, extra_info)
         """
         contents = body.get("contents", [])
-        system_instruction = body.get("systemInstruction", {})
+        system_instruction = body.get("system_instruction") or body.get(
+            "systemInstruction", {})
         generation_config = body.get("generationConfig", {})
 
         anthropic_messages = []

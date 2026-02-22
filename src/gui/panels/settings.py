@@ -63,7 +63,6 @@ class SettingsPanel(wx.Panel):
 
         self.host_ctrl = wx.TextCtrl(host_panel, value="0.0.0.0")
         style_text_ctrl(self.host_ctrl)
-        self.host_ctrl.SetMinSize(dip_size(host_panel, -1, 30))
         host_sizer.Add(self.host_ctrl, 0, wx.EXPAND)
 
         hint = wx.StaticText(
@@ -89,9 +88,7 @@ class SettingsPanel(wx.Panel):
                                      value="3000",
                                      min=1024,
                                      max=65535)
-        self.port_spin.SetBackgroundColour(BG_INPUT)
-        self.port_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.port_spin.SetMinSize(dip_size(port_panel, -1, 30))
+        style_spin_ctrl(self.port_spin)
         port_sizer.Add(self.port_spin, 0, wx.EXPAND)
 
         port_panel.SetSizer(port_sizer)
@@ -113,9 +110,7 @@ class SettingsPanel(wx.Panel):
         self.log_level = wx.Choice(
             log_panel, choices=["debug", "info", "warning", "error"])
         self.log_level.SetSelection(1)  # info
-        self.log_level.SetFont(make_font(9))
-        self.log_level.SetBackgroundColour(BG_INPUT)
-        self.log_level.SetMinSize(dip_size(log_panel, -1, 30))
+        style_choice(self.log_level)
         log_sizer.Add(self.log_level, 0)
 
         log_panel.SetSizer(log_sizer)
@@ -167,9 +162,7 @@ class SettingsPanel(wx.Panel):
                                         value="120",
                                         min=10,
                                         max=600)
-        self.timeout_spin.SetBackgroundColour(BG_INPUT)
-        self.timeout_spin.SetForegroundColour(TEXT_PRIMARY)
-        self.timeout_spin.SetMinSize(dip_size(timeout_panel, -1, 30))
+        style_spin_ctrl(self.timeout_spin)
         timeout_sizer.Add(self.timeout_spin, 0)
 
         timeout_panel.SetSizer(timeout_sizer)
@@ -211,7 +204,6 @@ class SettingsPanel(wx.Panel):
 
         self.cors_origins_ctrl = wx.TextCtrl(cors_panel, value="*")
         style_text_ctrl(self.cors_origins_ctrl)
-        self.cors_origins_ctrl.SetMinSize(dip_size(cors_panel, -1, 30))
         cors_sizer.Add(self.cors_origins_ctrl, 0, wx.EXPAND)
 
         cors_panel.SetSizer(cors_sizer)

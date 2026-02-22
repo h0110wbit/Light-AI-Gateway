@@ -103,10 +103,58 @@ def style_button_danger(btn: wx.Button):
 
 
 def style_text_ctrl(ctrl: wx.TextCtrl):
-    """Style a text control with dark theme"""
+    """Style a text control with dark theme and auto-fit height"""
     ctrl.SetBackgroundColour(BG_INPUT)
     ctrl.SetForegroundColour(TEXT_PRIMARY)
-    ctrl.SetFont(make_font(9))
+    font = make_font(9)
+    ctrl.SetFont(font)
+    text_height = ctrl.GetTextExtent("Ay")[1]
+    padding = 6
+    min_height = text_height + padding
+    ctrl.SetMinSize((-1, min_height))
+
+
+def get_control_height(ctrl: wx.Window) -> int:
+    """Calculate appropriate control height based on font size"""
+    font = make_font(9)
+    ctrl.SetFont(font)
+    text_height = ctrl.GetTextExtent("Ay")[1]
+    padding = 6
+    return text_height + padding
+
+
+def style_choice(ctrl: wx.Choice):
+    """Style a choice control with dark theme and auto-fit height"""
+    ctrl.SetBackgroundColour(BG_INPUT)
+    ctrl.SetForegroundColour(TEXT_PRIMARY)
+    font = make_font(9)
+    ctrl.SetFont(font)
+    text_height = ctrl.GetTextExtent("Ay")[1]
+    padding = 6
+    min_height = text_height + padding
+    ctrl.SetMinSize((-1, min_height))
+
+
+def style_spin_ctrl(ctrl: wx.SpinCtrl):
+    """Style a spin control with dark theme and auto-fit height"""
+    ctrl.SetBackgroundColour(BG_INPUT)
+    ctrl.SetForegroundColour(TEXT_PRIMARY)
+    font = make_font(9)
+    ctrl.SetFont(font)
+    text_height = ctrl.GetTextExtent("Ay")[1]
+    padding = 6
+    min_height = text_height + padding
+    ctrl.SetMinSize((-1, min_height))
+
+
+def get_button_height(window: wx.Window) -> int:
+    """Calculate appropriate button height based on font size"""
+    font = make_font(9, bold=True)
+    dc = wx.ClientDC(window)
+    dc.SetFont(font)
+    text_height = dc.GetTextExtent("Ay")[1]
+    padding = 10
+    return text_height + padding
 
 
 def style_label(label: wx.StaticText,
