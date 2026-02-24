@@ -277,6 +277,9 @@ class TokensPanel(wx.Panel):
         super().__init__(parent)
         self.controller = controller
         self.SetBackgroundColour(BG_PANEL)
+        # Cache for tokens data to avoid unnecessary re-rendering
+        self._cached_tokens = None
+        self._cached_auth_setting = None
         self._build_ui()
 
     def _build_ui(self):
@@ -337,49 +340,82 @@ class TokensPanel(wx.Panel):
         add_btn.Bind(wx.EVT_BUTTON, self.on_add)
         self.refresh()
 
-    def refresh(self):
+    def refresh(self, force=False):
+        """Refresh the token list from config
+
+        Args:
+            force: If True, force re-render even if data hasn't changed
+        """
         config = self.controller.get_config()
+        tokens = config.tokens
 
-        # Update auth info bar
-        if config.settings.require_auth:
-            self.auth_label.SetLabel(
-                "🔒 Authentication is ENABLED — tokens are required")
-            self.auth_label.SetForegroundColour(SUCCESS)
-            self.auth_info.SetBackgroundColour(wx.Colour(20, 40, 30))
-        else:
-            self.auth_label.SetLabel(
-                "⚠ Authentication is DISABLED — all requests are allowed")
-            self.auth_label.SetForegroundColour(WARNING)
-            self.auth_info.SetBackgroundColour(wx.Colour(40, 35, 15))
+        # Check if auth setting has changed
+        auth_changed = self._cached_auth_setting != config.settings.require_auth
+        if auth_changed:
+            self._cached_auth_setting = config.settings.require_auth
+            # Update auth info bar
+            if config.settings.require_auth:
+                self.auth_label.SetLabel(
+                    "🔒 Authentication is ENABLED — tokens are required")
+                self.auth_label.SetForegroundColour(SUCCESS)
+                self.auth_info.SetBackgroundColour(wx.Colour(20, 40, 30))
+            else:
+                self.auth_label.SetLabel(
+                    "⚠ Authentication is DISABLED — all requests are allowed")
+                self.auth_label.SetForegroundColour(WARNING)
+                self.auth_info.SetBackgroundColour(wx.Colour(40, 35, 15))
 
-        self._render_tokens(config.tokens)
+        # Check if tokens data has changed
+        tokens_changed = force or auth_changed or self._cached_tokens is None
+        if not tokens_changed:
+            if len(tokens) != len(self._cached_tokens):
+                tokens_changed = True
+            else:
+                # Compare token data
+                current_data = [(t.id, t.name, t.key[:10])
+                                for t in sorted(tokens, key=lambda x: x.id)]
+                cached_data = [
+                    (t.id, t.name, t.key[:10])
+                    for t in sorted(self._cached_tokens, key=lambda x: x.id)
+                ]
+                tokens_changed = current_data != cached_data
+
+        if tokens_changed:
+            self._cached_tokens = tokens
+            self._render_tokens(tokens)
+
         self.Layout()
 
     def _render_tokens(self, tokens):
-        for child in list(self.scroll.GetChildren()):
-            if isinstance(child, TokenRow):
-                child.Destroy()
-        self.list_sizer.Clear(False)
+        # Freeze to prevent flickering during rendering
+        self.scroll.Freeze()
+        try:
+            for child in list(self.scroll.GetChildren()):
+                if isinstance(child, TokenRow):
+                    child.Destroy()
+            self.list_sizer.Clear(False)
 
-        if not tokens:
-            self.empty_label.Show()
-            self.list_sizer.Add(self.empty_label, 0, wx.ALL, PADDING_XL)
-        else:
-            self.empty_label.Hide()
-            for i, token in enumerate(tokens):
-                row = TokenRow(
-                    self.scroll,
-                    token,
-                    on_edit=self.on_edit,
-                    on_delete=self.on_delete,
-                    on_copy=self.on_copy,
-                )
-                if i > 0:
-                    self.list_sizer.Add(Divider(self.scroll), 0, wx.EXPAND)
-                self.list_sizer.Add(row, 0, wx.EXPAND)
+            if not tokens:
+                self.empty_label.Show()
+                self.list_sizer.Add(self.empty_label, 0, wx.ALL, PADDING_XL)
+            else:
+                self.empty_label.Hide()
+                for i, token in enumerate(tokens):
+                    row = TokenRow(
+                        self.scroll,
+                        token,
+                        on_edit=self.on_edit,
+                        on_delete=self.on_delete,
+                        on_copy=self.on_copy,
+                    )
+                    if i > 0:
+                        self.list_sizer.Add(Divider(self.scroll), 0, wx.EXPAND)
+                    self.list_sizer.Add(row, 0, wx.EXPAND)
 
-        self.scroll.SetupScrolling()
-        self.scroll.Layout()
+            self.scroll.SetupScrolling()
+            self.scroll.Layout()
+        finally:
+            self.scroll.Thaw()
 
     def on_add(self, event):
         config = self.controller.get_config()

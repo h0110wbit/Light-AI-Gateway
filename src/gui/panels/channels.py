@@ -21,13 +21,22 @@ def dip_size(window: wx.Window, width: int, height: int) -> tuple:
     return (dip(window, width), dip(window, height))
 
 
-CHANNEL_TYPES = ["openai", "anthropic", "gemini", "ollama", "custom"]
+# 内置通道配置
+BUILTIN_PROVIDERS = {
+    "glm": {
+        "name": "GLM (智谱AI)",
+        "models": ["glm"],
+        "default_concurrency": 1,
+    }
+}
+
+CHANNEL_TYPES = ["openai", "anthropic", "gemini", "ollama", "builtin"]
 DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "gemini": "https://generativelanguage.googleapis.com",
     "ollama": "http://localhost:11434",
-    "custom": "https://api.example.com",
+    "builtin": "glm",  # 内置通道默认使用glm
 }
 
 
@@ -87,18 +96,55 @@ class ChannelDialog(wx.Dialog):
         form.Add(type_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
                  PADDING_MD)
 
-        # Base URL
-        self.url_input = LabeledInput(scroll, "Base URL *",
-                                      DEFAULT_URLS["openai"])
-        form.Add(self.url_input, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+        # Base URL / Builtin Provider Selection
+        self.url_panel = wx.Panel(scroll)
+        self.url_panel.SetBackgroundColour(BG_PANEL)
+        self.url_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self.url_label = wx.StaticText(self.url_panel, label="BASE URL *")
+        self.url_label.SetFont(make_font(8, bold=True))
+        self.url_label.SetForegroundColour(TEXT_SECONDARY)
+        self.url_sizer.Add(self.url_label, 0, wx.BOTTOM, 4)
+
+        # 普通输入框（用于非builtin类型）
+        self.url_input = wx.TextCtrl(self.url_panel,
+                                     value=DEFAULT_URLS["openai"])
+        style_text_ctrl(self.url_input)
+        self.url_sizer.Add(self.url_input, 0, wx.EXPAND)
+
+        # 选择列表（用于builtin类型）
+        self.builtin_choice = wx.Choice(
+            self.url_panel, choices=[BUILTIN_PROVIDERS["glm"]["name"]])
+        self.builtin_choice.SetSelection(0)
+        style_choice(self.builtin_choice)
+        self.builtin_choice.Hide()
+        self.url_sizer.Add(self.builtin_choice, 0, wx.EXPAND)
+
+        self.url_panel.SetSizer(self.url_sizer)
+        form.Add(self.url_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
                  PADDING_MD)
 
-        # API Key
-        self.key_input = LabeledInput(scroll, "API Key", "", password=True)
-        form.Add(self.key_input, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+        # API Key / Token
+        self.key_panel = wx.Panel(scroll)
+        self.key_panel.SetBackgroundColour(BG_PANEL)
+        self.key_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self.key_label = wx.StaticText(self.key_panel, label="API KEY")
+        self.key_label.SetFont(make_font(8, bold=True))
+        self.key_label.SetForegroundColour(TEXT_SECONDARY)
+        self.key_sizer.Add(self.key_label, 0, wx.BOTTOM, 4)
+
+        self.key_input = wx.TextCtrl(self.key_panel,
+                                     value="",
+                                     style=wx.TE_PASSWORD)
+        style_text_ctrl(self.key_input)
+        self.key_sizer.Add(self.key_input, 0, wx.EXPAND)
+
+        self.key_panel.SetSizer(self.key_sizer)
+        form.Add(self.key_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
                  PADDING_MD)
 
-        # Models (comma-separated)
+        # Models (comma-separated) - 普通通道使用
         self.models_input = LabeledInput(
             scroll, "Supported Models (comma-separated, leave empty for all)",
             "gpt-4o, gpt-4o-mini")
@@ -191,17 +237,18 @@ class ChannelDialog(wx.Dialog):
         form.Add(self.enabled_check, 0, wx.ALL, PADDING_MD)
 
         # Proxy settings section
-        proxy_section = wx.Panel(scroll)
-        proxy_section.SetBackgroundColour(BG_PANEL)
+        self.proxy_section = wx.Panel(scroll)
+        self.proxy_section.SetBackgroundColour(BG_PANEL)
         proxy_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        proxy_header = wx.StaticText(proxy_section, label="PROXY SETTINGS")
+        proxy_header = wx.StaticText(self.proxy_section,
+                                     label="PROXY SETTINGS")
         proxy_header.SetFont(make_font(8, bold=True))
         proxy_header.SetForegroundColour(TEXT_SECONDARY)
         proxy_sizer.Add(proxy_header, 0, wx.BOTTOM, 4)
 
         # Proxy enabled checkbox
-        self.proxy_enabled_check = wx.CheckBox(proxy_section,
+        self.proxy_enabled_check = wx.CheckBox(self.proxy_section,
                                                label="Enable Proxy")
         self.proxy_enabled_check.SetValue(False)
         self.proxy_enabled_check.SetFont(make_font(9))
@@ -211,15 +258,15 @@ class ChannelDialog(wx.Dialog):
 
         # Proxy URL input
         self.proxy_input = LabeledInput(
-            proxy_section,
+            self.proxy_section,
             "Proxy URL (http://host:port or socks5://host:port)",
             "http://127.0.0.1:7890")
         self.proxy_input.Enable(False)
         proxy_sizer.Add(self.proxy_input, 0, wx.EXPAND)
 
-        proxy_section.SetSizer(proxy_sizer)
-        form.Add(proxy_section, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
-                 PADDING_MD)
+        self.proxy_section.SetSizer(proxy_sizer)
+        form.Add(self.proxy_section, 0,
+                 wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, PADDING_MD)
 
         scroll.SetSizer(form)
         scroll.SetupScrolling()
@@ -257,12 +304,49 @@ class ChannelDialog(wx.Dialog):
         self.save_btn.Bind(wx.EVT_BUTTON, self._on_save)
 
     def _on_type_change(self, event):
+        """处理通道类型切换"""
         sel = self.type_choice.GetSelection()
-        if sel >= 0:
-            type_key = CHANNEL_TYPES[sel]
+        if sel < 0:
+            return
+
+        type_key = CHANNEL_TYPES[sel]
+        is_builtin = type_key == "builtin"
+
+        # 切换URL输入方式
+        if is_builtin:
+            # 切换到builtin模式：显示选择列表，隐藏输入框
+            self.url_input.Hide()
+            self.builtin_choice.Show()
+            self.url_label.SetLabel("BUILTIN PROVIDER *")
+            # 设置默认并发为1
+            self.concurrency_spin.SetValue(1)
+            # 固定模型为glm
+            self.models_input.SetValue("glm")
+            self.models_input.Disable()
+            # builtin类型不支持代理，隐藏代理设置
+            self.proxy_section.Hide()
+        else:
+            # 切换到普通模式：显示输入框，隐藏选择列表
+            self.url_input.Show()
+            self.builtin_choice.Hide()
+            self.url_label.SetLabel("BASE URL *")
             current_url = self.url_input.GetValue()
-            if not current_url or current_url in DEFAULT_URLS.values():
+            if not current_url or current_url in DEFAULT_URLS.values(
+            ) or current_url in BUILTIN_PROVIDERS:
                 self.url_input.SetValue(DEFAULT_URLS.get(type_key, ""))
+            self.models_input.Enable()
+            # 非builtin类型显示代理设置
+            self.proxy_section.Show()
+
+        # 切换API Key标签
+        if is_builtin:
+            self.key_label.SetLabel("REFRESH TOKEN *")
+        else:
+            self.key_label.SetLabel("API KEY")
+
+        self.url_panel.Layout()
+        self.key_panel.Layout()
+        self.Layout()
 
     def _on_proxy_toggle(self, event):
         """Enable/disable proxy URL input based on checkbox state"""
@@ -270,13 +354,38 @@ class ChannelDialog(wx.Dialog):
         self.proxy_input.Enable(enabled)
 
     def _load_channel(self, ch: ChannelConfig):
+        """加载通道数据到界面"""
         self.name_input.SetValue(ch.name)
         try:
             idx = CHANNEL_TYPES.index(ch.type.lower())
             self.type_choice.SetSelection(idx)
         except ValueError:
             self.type_choice.SetSelection(len(CHANNEL_TYPES) - 1)
-        self.url_input.SetValue(ch.base_url)
+
+        is_builtin = ch.type.lower() == "builtin"
+
+        # 根据类型切换界面
+        if is_builtin:
+            self.url_input.Hide()
+            self.builtin_choice.Show()
+            self.url_label.SetLabel("BUILTIN PROVIDER *")
+            self.key_label.SetLabel("REFRESH TOKEN *")
+            # 设置builtin选择
+            if ch.base_url in BUILTIN_PROVIDERS:
+                self.builtin_choice.SetSelection(0)  # 目前只有glm
+            self.models_input.Disable()
+            # builtin类型不支持代理，隐藏代理设置
+            self.proxy_section.Hide()
+        else:
+            self.url_input.Show()
+            self.builtin_choice.Hide()
+            self.url_label.SetLabel("BASE URL *")
+            self.key_label.SetLabel("API KEY")
+            self.url_input.SetValue(ch.base_url)
+            self.models_input.Enable()
+            # 非builtin类型显示代理设置
+            self.proxy_section.Show()
+
         self.key_input.SetValue(ch.api_key)
         self.models_input.SetValue(", ".join(ch.models))
         self.priority_spin.SetValue(ch.priority)
@@ -288,29 +397,74 @@ class ChannelDialog(wx.Dialog):
         if ch.proxy_url:
             self.proxy_input.SetValue(ch.proxy_url)
 
+        self.url_panel.Layout()
+        self.key_panel.Layout()
+        self.Layout()
+
     def _on_save(self, event):
+        """保存通道前的验证"""
         if not self.name_input.GetValue().strip():
             wx.MessageBox("Channel name is required", "Validation Error",
                           wx.OK | wx.ICON_WARNING)
             return
-        if not self.url_input.GetValue().strip():
-            wx.MessageBox("Base URL is required", "Validation Error",
-                          wx.OK | wx.ICON_WARNING)
+
+        sel = self.type_choice.GetSelection()
+        type_key = CHANNEL_TYPES[sel] if sel >= 0 else "openai"
+        is_builtin = type_key == "builtin"
+
+        # 验证URL或Builtin选择
+        if is_builtin:
+            if self.builtin_choice.GetSelection() < 0:
+                wx.MessageBox("Please select a builtin provider",
+                              "Validation Error", wx.OK | wx.ICON_WARNING)
+                return
+        else:
+            if not self.url_input.GetValue().strip():
+                wx.MessageBox("Base URL is required", "Validation Error",
+                              wx.OK | wx.ICON_WARNING)
+                return
+
+        # 验证Token（builtin类型必需）
+        if is_builtin and not self.key_input.GetValue().strip():
+            wx.MessageBox("Refresh Token is required for builtin provider",
+                          "Validation Error", wx.OK | wx.ICON_WARNING)
             return
+
         self.EndModal(wx.ID_OK)
 
     def get_channel_data(self) -> dict:
-        models_str = self.models_input.GetValue().strip()
-        models = [m.strip() for m in models_str.split(",")
-                  if m.strip()] if models_str else []
+        """获取通道数据"""
+        sel = self.type_choice.GetSelection()
+        type_key = CHANNEL_TYPES[sel] if sel >= 0 else "openai"
+        is_builtin = type_key == "builtin"
+
+        # 获取base_url
+        if is_builtin:
+            # builtin类型使用provider key作为base_url
+            builtin_idx = self.builtin_choice.GetSelection()
+            if builtin_idx == 0:
+                base_url = "glm"
+            else:
+                base_url = "glm"  # 默认glm
+        else:
+            base_url = self.url_input.GetValue().strip()
+
+        # 获取模型列表
+        if is_builtin:
+            # builtin类型使用固定模型列表
+            models = BUILTIN_PROVIDERS.get(base_url, {}).get("models", ["glm"])
+        else:
+            models_str = self.models_input.GetValue().strip()
+            models = [m.strip() for m in models_str.split(",")
+                      if m.strip()] if models_str else []
 
         return {
             "name":
             self.name_input.GetValue().strip(),
             "type":
-            CHANNEL_TYPES[self.type_choice.GetSelection()],
+            type_key,
             "base_url":
-            self.url_input.GetValue().strip(),
+            base_url,
             "api_key":
             self.key_input.GetValue(),
             "models":
@@ -435,6 +589,7 @@ class ChannelRow(wx.Panel):
         """Update the status dot color based on enabled state"""
         status_color = ACCENT if self.channel.enabled else TEXT_MUTED
         self.status_dot.SetBackgroundColour(status_color)
+        self.status_dot.Refresh()
 
     def _update_toggle_button(self):
         """Update the toggle button appearance"""
@@ -446,6 +601,7 @@ class ChannelRow(wx.Panel):
             self.toggle_btn.SetLabel("OFF")
             self.toggle_btn.SetBackgroundColour(wx.Colour(60, 50, 40))
             self.toggle_btn.SetForegroundColour(TEXT_MUTED)
+        self.toggle_btn.Refresh()
 
     def _on_toggle(self, event):
         """Handle toggle button click"""
@@ -466,6 +622,8 @@ class ChannelsPanel(wx.Panel):
         super().__init__(parent)
         self.controller = controller
         self.SetBackgroundColour(BG_PANEL)
+        # Cache for channels data to avoid unnecessary re-rendering
+        self._cached_channels = None
         self._build_ui()
 
     def _build_ui(self):
@@ -513,10 +671,31 @@ class ChannelsPanel(wx.Panel):
         # Initial load
         self.refresh()
 
-    def refresh(self):
-        """Refresh the channel list from config"""
+    def refresh(self, force=False):
+        """Refresh the channel list from config
+
+        Args:
+            force: If True, force re-render even if data hasn't changed
+        """
         config = self.controller.get_config()
-        self._render_channels(config.channels)
+        channels = config.channels
+
+        # Check if data has changed (compare by id and enabled state)
+        if not force and self._cached_channels is not None:
+            if len(channels) == len(self._cached_channels):
+                # Quick check: compare sorted channel data
+                current_data = [(c.id, c.enabled, c.priority)
+                                for c in sorted(channels, key=lambda x: x.id)]
+                cached_data = [
+                    (c.id, c.enabled, c.priority)
+                    for c in sorted(self._cached_channels, key=lambda x: x.id)
+                ]
+                if current_data == cached_data:
+                    return  # Data unchanged, skip re-rendering
+
+        # Update cache and render
+        self._cached_channels = channels
+        self._render_channels(channels)
         self.Layout()
 
     def _render_channels(self, channels):
@@ -524,33 +703,38 @@ class ChannelsPanel(wx.Panel):
         Render the channel list sorted by priority (highest first).
         Priority 1 is highest, so we sort in ascending order.
         """
-        # Clear existing rows (except empty label)
-        for child in list(self.scroll.GetChildren()):
-            if isinstance(child, ChannelRow):
-                child.Destroy()
-        self.list_sizer.Clear(False)
+        # Freeze to prevent flickering during rendering
+        self.scroll.Freeze()
+        try:
+            # Clear existing rows (except empty label)
+            for child in list(self.scroll.GetChildren()):
+                if isinstance(child, ChannelRow):
+                    child.Destroy()
+            self.list_sizer.Clear(False)
 
-        if not channels:
-            self.empty_label.Show()
-            self.list_sizer.Add(self.empty_label, 0, wx.ALL, PADDING_XL)
-        else:
-            self.empty_label.Hide()
-            # Sort channels by priority (ascending - lower number = higher priority)
-            sorted_channels = sorted(channels, key=lambda ch: ch.priority)
-            for i, ch in enumerate(sorted_channels):
-                row = ChannelRow(
-                    self.scroll,
-                    ch,
-                    on_edit=self.on_edit,
-                    on_delete=self.on_delete,
-                    on_toggle=self.on_toggle,
-                )
-                if i > 0:
-                    self.list_sizer.Add(Divider(self.scroll), 0, wx.EXPAND)
-                self.list_sizer.Add(row, 0, wx.EXPAND)
+            if not channels:
+                self.empty_label.Show()
+                self.list_sizer.Add(self.empty_label, 0, wx.ALL, PADDING_XL)
+            else:
+                self.empty_label.Hide()
+                # Sort channels by priority (ascending - lower number = higher priority)
+                sorted_channels = sorted(channels, key=lambda ch: ch.priority)
+                for i, ch in enumerate(sorted_channels):
+                    row = ChannelRow(
+                        self.scroll,
+                        ch,
+                        on_edit=self.on_edit,
+                        on_delete=self.on_delete,
+                        on_toggle=self.on_toggle,
+                    )
+                    if i > 0:
+                        self.list_sizer.Add(Divider(self.scroll), 0, wx.EXPAND)
+                    self.list_sizer.Add(row, 0, wx.EXPAND)
 
-        self.scroll.SetupScrolling()
-        self.scroll.Layout()
+            self.scroll.SetupScrolling()
+            self.scroll.Layout()
+        finally:
+            self.scroll.Thaw()
 
     def on_add(self, event):
         dlg = ChannelDialog(self)
@@ -579,5 +763,12 @@ class ChannelsPanel(wx.Panel):
 
     def on_toggle(self, channel: ChannelConfig):
         """Toggle channel enabled state"""
-        self.controller.toggle_channel(channel.id)
-        self.refresh()
+        # 更新数据
+        updated_channel = self.controller.toggle_channel(channel.id)
+        # 只更新对应的行，而不是刷新整个列表
+        if updated_channel:
+            for child in self.scroll.GetChildren():
+                if isinstance(child,
+                              ChannelRow) and child.channel.id == channel.id:
+                    child.update_channel(updated_channel)
+                    break

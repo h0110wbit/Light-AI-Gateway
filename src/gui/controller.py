@@ -160,7 +160,7 @@ class GatewayController:
         self._save()
         self._log(f"Channel '{name}' deleted", "info")
 
-    def toggle_channel(self, channel_id: int):
+    def toggle_channel(self, channel_id: int) -> Optional[ChannelConfig]:
         """Toggle channel enabled state"""
         ch = self._config.get_channel_by_id(channel_id)
         if ch:
@@ -168,8 +168,10 @@ class GatewayController:
             self._save()
             status = "enabled" if ch.enabled else "disabled"
             self._log(f"Channel '{ch.name}' {status}", "success")
+            return ch
         else:
             self._log(f"Channel {channel_id} not found", "error")
+            return None
 
     # ─── Token management ───────────────────────────────────────────────────────
 

@@ -361,9 +361,24 @@ class MainFrame(wx.Frame):
             "tokens": self.tokens_panel,
             "settings": self.settings_panel,
         }
-        for k, panel in panel_map.items():
-            panel.Show(k == key)
-        self.content_container.Layout()
+
+        # Freeze to prevent flickering during panel switch
+        self.content_container.Freeze()
+        try:
+            for k, panel in panel_map.items():
+                panel.Show(k == key)
+            self.content_container.Layout()
+
+            # Force refresh of the visible panel to prevent rendering artifacts
+            visible_panel = panel_map.get(key)
+            if visible_panel:
+                visible_panel.Refresh()
+                # For scrolled panels, also refresh the scroll window
+                if hasattr(visible_panel, 'scroll') and visible_panel.scroll:
+                    visible_panel.scroll.Refresh()
+                    visible_panel.scroll.SetupScrolling()
+        finally:
+            self.content_container.Thaw()
 
     def _on_status_changed(self, status: str):
         """Handle server status changes"""
