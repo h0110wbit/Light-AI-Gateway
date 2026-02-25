@@ -398,6 +398,9 @@ class MainFrame(wx.Frame):
     def _on_config_changed(self, config):
         """Handle configuration changes"""
         self._update_stats()
+        # Refresh panels that depend on config
+        self.channels_panel.refresh()
+        self.tokens_panel.refresh()
 
     def _on_log_message(self, message: str, level: str = "info"):
         """Handle log messages from controller"""

@@ -27,7 +27,27 @@ BUILTIN_PROVIDERS = {
         "name": "GLM (智谱AI)",
         "models": ["glm"],
         "default_concurrency": 1,
-    }
+    },
+    "deepseek": {
+        "name": "DeepSeek",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "default_concurrency": 1,
+    },
+    "kimi": {
+        "name": "Kimi (Moonshot)",
+        "models": ["kimi-latest"],
+        "default_concurrency": 1,
+    },
+    "minimax": {
+        "name": "MiniMax (海螺AI)",
+        "models": ["minimax-text"],
+        "default_concurrency": 1,
+    },
+    "qwen": {
+        "name": "Qwen (通义千问)",
+        "models": ["qwen-turbo", "qwen-plus", "qwen-max"],
+        "default_concurrency": 1,
+    },
 }
 
 CHANNEL_TYPES = ["openai", "anthropic", "gemini", "ollama", "builtin"]
@@ -113,8 +133,11 @@ class ChannelDialog(wx.Dialog):
         self.url_sizer.Add(self.url_input, 0, wx.EXPAND)
 
         # 选择列表（用于builtin类型）
-        self.builtin_choice = wx.Choice(
-            self.url_panel, choices=[BUILTIN_PROVIDERS["glm"]["name"]])
+        builtin_choices = [
+            config["name"] for config in BUILTIN_PROVIDERS.values()
+        ]
+        self.builtin_choice = wx.Choice(self.url_panel,
+                                        choices=builtin_choices)
         self.builtin_choice.SetSelection(0)
         style_choice(self.builtin_choice)
         self.builtin_choice.Hide()
@@ -275,6 +298,9 @@ class ChannelDialog(wx.Dialog):
         # Update URL on type change
         self.type_choice.Bind(wx.EVT_CHOICE, self._on_type_change)
 
+        # Update models on builtin provider change
+        self.builtin_choice.Bind(wx.EVT_CHOICE, self._on_builtin_change)
+
         # Proxy enabled toggle
         self.proxy_enabled_check.Bind(wx.EVT_CHECKBOX, self._on_proxy_toggle)
 
@@ -320,8 +346,8 @@ class ChannelDialog(wx.Dialog):
             self.url_label.SetLabel("BUILTIN PROVIDER *")
             # 设置默认并发为1
             self.concurrency_spin.SetValue(1)
-            # 固定模型为glm
-            self.models_input.SetValue("glm")
+            # 更新模型列表为当前选择的内置通道
+            self._update_builtin_models()
             self.models_input.Disable()
             # builtin类型不支持代理，隐藏代理设置
             self.proxy_section.Hide()
@@ -348,6 +374,25 @@ class ChannelDialog(wx.Dialog):
         self.key_panel.Layout()
         self.Layout()
 
+    def _on_builtin_change(self, event):
+        """处理内置通道选择变化"""
+        self._update_builtin_models()
+
+    def _update_builtin_models(self):
+        """根据选择的内置通道更新模型列表"""
+        sel = self.builtin_choice.GetSelection()
+        if sel < 0:
+            return
+
+        # 获取选择的provider key
+        provider_keys = list(BUILTIN_PROVIDERS.keys())
+        if sel >= len(provider_keys):
+            return
+
+        provider_key = provider_keys[sel]
+        models = BUILTIN_PROVIDERS[provider_key]["models"]
+        self.models_input.SetValue(", ".join(models))
+
     def _on_proxy_toggle(self, event):
         """Enable/disable proxy URL input based on checkbox state"""
         enabled = self.proxy_enabled_check.GetValue()
@@ -371,8 +416,12 @@ class ChannelDialog(wx.Dialog):
             self.url_label.SetLabel("BUILTIN PROVIDER *")
             self.key_label.SetLabel("REFRESH TOKEN *")
             # 设置builtin选择
-            if ch.base_url in BUILTIN_PROVIDERS:
-                self.builtin_choice.SetSelection(0)  # 目前只有glm
+            provider_keys = list(BUILTIN_PROVIDERS.keys())
+            if ch.base_url in provider_keys:
+                idx = provider_keys.index(ch.base_url)
+                self.builtin_choice.SetSelection(idx)
+            else:
+                self.builtin_choice.SetSelection(0)
             self.models_input.Disable()
             # builtin类型不支持代理，隐藏代理设置
             self.proxy_section.Hide()
@@ -441,9 +490,10 @@ class ChannelDialog(wx.Dialog):
         # 获取base_url
         if is_builtin:
             # builtin类型使用provider key作为base_url
+            provider_keys = list(BUILTIN_PROVIDERS.keys())
             builtin_idx = self.builtin_choice.GetSelection()
-            if builtin_idx == 0:
-                base_url = "glm"
+            if 0 <= builtin_idx < len(provider_keys):
+                base_url = provider_keys[builtin_idx]
             else:
                 base_url = "glm"  # 默认glm
         else:
@@ -694,7 +744,8 @@ class ChannelsPanel(wx.Panel):
                     return  # Data unchanged, skip re-rendering
 
         # Update cache and render
-        self._cached_channels = channels
+        # 使用列表副本存储缓存，避免引用问题
+        self._cached_channels = list(channels)
         self._render_channels(channels)
         self.Layout()
 

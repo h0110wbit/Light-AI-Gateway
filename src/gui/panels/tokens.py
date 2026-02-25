@@ -381,7 +381,8 @@ class TokensPanel(wx.Panel):
                 tokens_changed = current_data != cached_data
 
         if tokens_changed:
-            self._cached_tokens = tokens
+            # 使用列表副本存储缓存，避免引用问题
+            self._cached_tokens = list(tokens)
             self._render_tokens(tokens)
 
         self.Layout()
