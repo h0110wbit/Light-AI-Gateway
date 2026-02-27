@@ -14,6 +14,7 @@ class ProviderType(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    BUILTIN = "builtin"
 
 
 class FormatConverter:
@@ -43,6 +44,12 @@ class FormatConverter:
         Returns:
             Tuple of (transformed_body, model_name, extra_info)
         """
+        # BUILTIN 类型使用 OPENAI 的逻辑
+        if source == ProviderType.BUILTIN:
+            source = ProviderType.OPENAI
+        if target == ProviderType.BUILTIN:
+            target = ProviderType.OPENAI
+
         if source == target:
             model = body.get("model", "")
             return body, model, {}
@@ -572,6 +579,12 @@ class FormatConverter:
         Returns:
             Transformed response dict
         """
+        # BUILTIN 类型使用 OPENAI 的逻辑
+        if source == ProviderType.BUILTIN:
+            source = ProviderType.OPENAI
+        if target == ProviderType.BUILTIN:
+            target = ProviderType.OPENAI
+
         if source == target:
             return data
 
@@ -963,6 +976,12 @@ class FormatConverter:
         if source == target:
             return data
 
+        # BUILTIN 类型使用 OPENAI 的逻辑
+        if source == ProviderType.BUILTIN:
+            source = ProviderType.OPENAI
+        if target == ProviderType.BUILTIN:
+            target = ProviderType.OPENAI
+
         transform_key = f"{source.value}_to_{target.value}"
         transform_map = {
             "anthropic_to_openai": FormatConverter._stream_anthropic_to_openai,
@@ -1313,93 +1332,3 @@ class FormatConverter:
             }
 
         return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Convenience Functions (for backward compatibility with existing proxy.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def transform_request_for_provider(
-    body: Dict[str, Any],
-    provider_type: str,
-) -> Tuple[Dict[str, Any], str, Dict[str, Any]]:
-    """
-    Transform request body for a specific provider.
-    Assumes input is in OpenAI format (gateway's internal format).
-    
-    Args:
-        body: OpenAI-format request body
-        provider_type: Target provider type (openai, anthropic, gemini)
-        
-    Returns:
-        Tuple of (transformed_body, model_name, extra_info)
-    """
-    provider_map = {
-        "openai": ProviderType.OPENAI,
-        "anthropic": ProviderType.ANTHROPIC,
-        "gemini": ProviderType.GEMINI,
-        "ollama": ProviderType.OPENAI,
-        "custom": ProviderType.OPENAI,
-    }
-
-    target = provider_map.get(provider_type.lower(), ProviderType.OPENAI)
-    return FormatConverter.transform_request(body, ProviderType.OPENAI, target)
-
-
-def transform_response_from_provider(
-    data: Dict[str, Any],
-    provider_type: str,
-    model: str = "",
-) -> Dict[str, Any]:
-    """
-    Transform response body from a specific provider to OpenAI format.
-    
-    Args:
-        data: Provider-specific response body
-        provider_type: Source provider type (openai, anthropic, gemini)
-        model: Model name
-        
-    Returns:
-        OpenAI-format response dict
-    """
-    provider_map = {
-        "openai": ProviderType.OPENAI,
-        "anthropic": ProviderType.ANTHROPIC,
-        "gemini": ProviderType.GEMINI,
-        "ollama": ProviderType.OPENAI,
-        "custom": ProviderType.OPENAI,
-    }
-
-    source = provider_map.get(provider_type.lower(), ProviderType.OPENAI)
-    return FormatConverter.transform_response(data, source,
-                                              ProviderType.OPENAI, model)
-
-
-def transform_stream_chunk_from_provider(
-    data: Dict[str, Any],
-    provider_type: str,
-    model: str = "",
-) -> Optional[Dict[str, Any]]:
-    """
-    Transform stream chunk from a specific provider to OpenAI format.
-    
-    Args:
-        data: Provider-specific stream chunk
-        provider_type: Source provider type
-        model: Model name
-        
-    Returns:
-        OpenAI-format chunk dict or None
-    """
-    provider_map = {
-        "openai": ProviderType.OPENAI,
-        "anthropic": ProviderType.ANTHROPIC,
-        "gemini": ProviderType.GEMINI,
-        "ollama": ProviderType.OPENAI,
-        "custom": ProviderType.OPENAI,
-    }
-
-    source = provider_map.get(provider_type.lower(), ProviderType.OPENAI)
-    return FormatConverter.transform_stream_chunk(data, source,
-                                                  ProviderType.OPENAI, model)

@@ -48,7 +48,7 @@ class DashboardPanel(wx.Panel):
 
         title_row.AddStretchSpacer()
 
-        ver_lbl = wx.StaticText(header, label="by h0110wbit | v1.0.0")
+        ver_lbl = wx.StaticText(header, label="by h0110wbit | v1.1.0")
         ver_lbl.SetFont(make_font(8))
         ver_lbl.SetForegroundColour(TEXT_MUTED)
         title_row.Add(ver_lbl, 0, wx.ALIGN_CENTER_VERTICAL)

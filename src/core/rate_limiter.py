@@ -40,7 +40,7 @@ class RateLimitConfig:
     """
     max_concurrency: Optional[int] = None
     min_concurrency: int = 1
-    max_adaptive_concurrency: int = 100
+    max_adaptive_concurrency: int = 10
     response_time_low: float = 1.0
     response_time_high: float = 5.0
     error_rate_threshold: float = 0.1
@@ -147,7 +147,8 @@ class AdaptiveLimiter:
     4. If error rate is high, decrease concurrency aggressively.
     """
 
-    def __init__(self, channel_id: int, channel_name: str, config: RateLimitConfig):
+    def __init__(self, channel_id: int, channel_name: str,
+                 config: RateLimitConfig):
         """
         Initialize the adaptive limiter.
         
@@ -159,9 +160,8 @@ class AdaptiveLimiter:
         self.channel_id = channel_id
         self.channel_name = channel_name
         self.config = config
-        self.stats = ChannelStats(
-            records=deque(maxlen=config.stats_window_size)
-        )
+        self.stats = ChannelStats(records=deque(
+            maxlen=config.stats_window_size))
 
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._current_limit: int = 0
@@ -209,17 +209,32 @@ class AdaptiveLimiter:
         await semaphore.acquire()
         return True
 
+    def try_acquire(self) -> bool:
+        """
+        非阻塞尝试获取许可
+
+        Returns:
+            True 如果成功获取许可，False 如果当前已满
+        """
+        semaphore = self._get_semaphore()
+        try:
+            # acquire_nowait() 在 Python 3.10 及以下返回 False 表示失败
+            # 在 Python 3.11+ 可能抛出异常
+            result = semaphore.acquire_nowait()
+            return result
+        except Exception:
+            # Semaphore 已满或已关闭
+            return False
+
     def release(self):
         """Release a slot after request completion."""
         if self._semaphore:
             self._semaphore.release()
 
-    def record_request(
-        self,
-        response_time: float,
-        is_error: bool,
-        status_code: int = 200
-    ):
+    def record_request(self,
+                       response_time: float,
+                       is_error: bool,
+                       status_code: int = 200):
         """
         Record a completed request for statistics.
         
@@ -228,12 +243,10 @@ class AdaptiveLimiter:
             is_error: Whether the request resulted in an error.
             status_code: HTTP status code of the response.
         """
-        record = RequestRecord(
-            timestamp=time.time(),
-            response_time=response_time,
-            is_error=is_error,
-            status_code=status_code
-        )
+        record = RequestRecord(timestamp=time.time(),
+                               response_time=response_time,
+                               is_error=is_error,
+                               status_code=status_code)
         self.stats.add_record(record)
 
         if self.is_adaptive:
@@ -263,10 +276,8 @@ class AdaptiveLimiter:
         adjusted = False
 
         if error_rate > self.config.error_rate_threshold:
-            new_limit = max(
-                self.config.min_concurrency,
-                int(self._current_limit * 0.5)
-            )
+            new_limit = max(self.config.min_concurrency,
+                            int(self._current_limit * 0.5))
             if new_limit != self._current_limit:
                 self._current_limit = new_limit
                 adjusted = True
@@ -278,8 +289,7 @@ class AdaptiveLimiter:
         elif avg_response_time > self.config.response_time_high:
             new_limit = max(
                 self.config.min_concurrency,
-                int(self._current_limit * self.config.decrease_factor)
-            )
+                int(self._current_limit * self.config.decrease_factor))
             if new_limit != self._current_limit:
                 self._current_limit = new_limit
                 adjusted = True
@@ -288,12 +298,10 @@ class AdaptiveLimiter:
                     f"reducing concurrency: {old_limit} -> {self._current_limit}"
                 )
 
-        elif (avg_response_time < self.config.response_time_low and
-              error_rate < self.config.error_rate_threshold * 0.5):
-            new_limit = min(
-                self.config.max_adaptive_concurrency,
-                self._current_limit + self.config.increase_step
-            )
+        elif (avg_response_time < self.config.response_time_low
+              and error_rate < self.config.error_rate_threshold * 0.5):
+            new_limit = min(self.config.max_adaptive_concurrency,
+                            self._current_limit + self.config.increase_step)
             if new_limit != self._current_limit:
                 self._current_limit = new_limit
                 adjusted = True
@@ -321,6 +329,21 @@ class AdaptiveLimiter:
                         except asyncio.SemaphoreError:
                             break
 
+    @property
+    def active_requests(self) -> int:
+        """
+        获取当前正在处理的请求数量
+        
+        Returns:
+            当前活跃的请求数
+        """
+        if self._semaphore is None:
+            return 0
+        # 计算当前正在处理的请求数
+        # semaphore._value 表示剩余的许可数
+        # 所以 active = limit - remaining
+        return self._current_limit - self._semaphore._value
+
     def update_config(self, config: RateLimitConfig):
         """
         Update the rate limit configuration.
@@ -334,17 +357,13 @@ class AdaptiveLimiter:
         if config.mode == LimitMode.FIXED:
             self._current_limit = config.max_concurrency
             self._recreate_semaphore()
-            logger.info(
-                f"[{self.channel_name}] Switched to fixed mode, "
-                f"concurrency limit: {self._current_limit}"
-            )
+            logger.info(f"[{self.channel_name}] Switched to fixed mode, "
+                        f"concurrency limit: {self._current_limit}")
         elif old_mode == LimitMode.FIXED:
             self._current_limit = config.min_concurrency
             self._recreate_semaphore()
-            logger.info(
-                f"[{self.channel_name}] Switched to adaptive mode, "
-                f"starting concurrency: {self._current_limit}"
-            )
+            logger.info(f"[{self.channel_name}] Switched to adaptive mode, "
+                        f"starting concurrency: {self._current_limit}")
 
     def get_stats(self) -> Dict:
         """
@@ -385,11 +404,8 @@ class RateLimiterManager:
         self._lock = asyncio.Lock()
 
     async def get_or_create_limiter(
-        self,
-        channel_id: int,
-        channel_name: str,
-        config: RateLimitConfig
-    ) -> AdaptiveLimiter:
+            self, channel_id: int, channel_name: str,
+            config: RateLimitConfig) -> AdaptiveLimiter:
         """
         Get an existing limiter or create a new one.
         
@@ -476,13 +492,11 @@ class RateLimiterManager:
         if limiter:
             limiter.release()
 
-    def record_request(
-        self,
-        channel_id: int,
-        response_time: float,
-        is_error: bool,
-        status_code: int = 200
-    ):
+    def record_request(self,
+                       channel_id: int,
+                       response_time: float,
+                       is_error: bool,
+                       status_code: int = 200):
         """
         Record a completed request for a channel.
         
@@ -509,12 +523,10 @@ class RateLimitContext:
             ctx.record_error(response_time, status_code)
     """
 
-    def __init__(
-        self,
-        manager: RateLimiterManager,
-        channel_id: int,
-        timeout: float = 30.0
-    ):
+    def __init__(self,
+                 manager: RateLimiterManager,
+                 channel_id: int,
+                 timeout: float = 30.0):
         """
         Initialize the rate limit context.
         
@@ -532,10 +544,8 @@ class RateLimitContext:
     async def __aenter__(self) -> "RateLimitContext":
         """Acquire a slot and enter the context."""
         self._start_time = time.time()
-        await asyncio.wait_for(
-            self.manager.acquire(self.channel_id),
-            timeout=self.timeout
-        )
+        await asyncio.wait_for(self.manager.acquire(self.channel_id),
+                               timeout=self.timeout)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -543,12 +553,8 @@ class RateLimitContext:
         if not self._recorded and self._start_time:
             response_time = time.time() - self._start_time
             is_error = exc_type is not None
-            self.manager.record_request(
-                self.channel_id,
-                response_time,
-                is_error,
-                500 if is_error else 200
-            )
+            self.manager.record_request(self.channel_id, response_time,
+                                        is_error, 500 if is_error else 200)
         self.manager.release(self.channel_id)
         return False
 
@@ -567,18 +573,12 @@ class RateLimitContext:
             response_time = time.time() - self._start_time
 
         if response_time is not None:
-            self.manager.record_request(
-                self.channel_id,
-                response_time,
-                False,
-                200
-            )
+            self.manager.record_request(self.channel_id, response_time, False,
+                                        200)
 
-    def record_error(
-        self,
-        response_time: Optional[float] = None,
-        status_code: int = 500
-    ):
+    def record_error(self,
+                     response_time: Optional[float] = None,
+                     status_code: int = 500):
         """
         Record a failed request.
         
@@ -594,9 +594,5 @@ class RateLimitContext:
             response_time = time.time() - self._start_time
 
         if response_time is not None:
-            self.manager.record_request(
-                self.channel_id,
-                response_time,
-                True,
-                status_code
-            )
+            self.manager.record_request(self.channel_id, response_time, True,
+                                        status_code)

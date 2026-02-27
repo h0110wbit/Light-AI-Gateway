@@ -31,7 +31,7 @@ class ChannelConfig(BaseModel):
 
     id: int
     name: str
-    type: str  # openai, anthropic, gemini, ollama, custom
+    type: str  # openai, anthropic, gemini, ollama, builtin
     base_url: str
     api_key: str
     models: List[str] = []

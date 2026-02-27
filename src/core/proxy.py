@@ -9,238 +9,26 @@ import asyncio
 import json
 import logging
 import time
-from typing import AsyncGenerator, Optional, Tuple, Union
+from typing import AsyncGenerator, Optional, Union
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from src.models.config import AppConfig, ChannelConfig
-from src.core.converter import (
-    transform_request_for_provider,
-    transform_response_from_provider,
-    transform_stream_chunk_from_provider,
-    FormatConverter,
-    ProviderType,
-)
 from src.core.rate_limiter import (
     RateLimiterManager,
     RateLimitConfig,
-    RateLimitContext,
+)
+from src.core.channel_provider import ChannelProvider
+from src.core.channel_providers import (
+    HTTPChannelProvider,
+    GLMChannelProvider,
+    KimiChannelProvider,
+    DeepSeekChannelProvider,
+    QwenChannelProvider,
+    MiniMaxChannelProvider,
 )
 
 logger = logging.getLogger("ai-gateway.proxy")
-
-# Headers that should not be forwarded to upstream (hop-by-hop or sensitive)
-SKIP_HEADERS = {
-    "host",
-    "content-length",
-    "transfer-encoding",
-    "connection",
-    "keep-alive",
-    "upgrade",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "authorization",
-    "x-api-key",
-    "x-goog-api-key",
-    "cookie",
-}
-
-
-def build_upstream_headers(channel: ChannelConfig,
-                           original_headers: dict) -> dict:
-    """
-    Build headers for the upstream request.
-    
-    Preserves most original headers but removes hop-by-hop and auth headers,
-    then adds channel-specific authentication.
-    """
-    headers = {}
-
-    for key, value in original_headers.items():
-        key_lower = key.lower()
-        if key_lower in SKIP_HEADERS:
-            continue
-        headers[key] = value
-
-    headers["Content-Type"] = "application/json"
-
-    channel_type = channel.type.lower()
-
-    if channel_type == "anthropic":
-        headers["x-api-key"] = channel.api_key
-        headers["anthropic-version"] = "2023-06-01"
-    elif channel_type == "gemini":
-        # Gemini uses API key as query param, not header
-        pass
-    else:
-        # OpenAI-compatible
-        if channel.api_key:
-            headers["Authorization"] = f"Bearer {channel.api_key}"
-
-    return headers
-
-
-def get_upstream_url(
-    channel: ChannelConfig,
-    model: str = "",
-    is_stream: bool = False,
-    endpoint_type: str = "chat",
-) -> str:
-    """
-    Build the full upstream URL based on channel type and endpoint.
-    
-    Args:
-        channel: Channel configuration
-        model: Model name (required for Gemini and some endpoints)
-        is_stream: Whether this is a streaming request
-        endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
-        
-    Returns:
-        Full upstream URL
-    """
-    base = channel.base_url.rstrip("/")
-    channel_type = channel.type.lower()
-
-    if channel_type == "anthropic":
-        if endpoint_type == "chat":
-            url = f"{base}/v1/messages"
-        elif endpoint_type == "models":
-            url = f"{base}/v1/models"
-        else:
-            url = f"{base}/v1/{endpoint_type}"
-        return url
-
-    if channel_type == "gemini":
-        api_version = "v1beta"
-        if endpoint_type == "chat":
-            method = "streamGenerateContent" if is_stream else "generateContent"
-            url = f"{base}/{api_version}/models/{model}:{method}"
-            if is_stream:
-                url += "?alt=sse"
-        elif endpoint_type == "models":
-            url = f"{base}/{api_version}/models"
-        else:
-            url = f"{base}/{api_version}/{endpoint_type}"
-        if channel.api_key:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}key={channel.api_key}"
-        return url
-
-    if channel_type == "ollama":
-        if endpoint_type == "chat":
-            url = f"{base}/api/chat"
-        elif endpoint_type == "completions":
-            url = f"{base}/api/generate"
-        elif endpoint_type == "embeddings":
-            url = f"{base}/api/embeddings"
-        elif endpoint_type == "models":
-            url = f"{base}/api/tags"
-        else:
-            url = f"{base}/api/{endpoint_type}"
-        return url
-
-    if endpoint_type == "chat":
-        url = f"{base}/chat/completions"
-    elif endpoint_type == "completions":
-        url = f"{base}/completions"
-    elif endpoint_type == "embeddings":
-        url = f"{base}/embeddings"
-    elif endpoint_type == "models":
-        url = f"{base}/models"
-    elif endpoint_type == "images":
-        url = f"{base}/images/generations"
-    elif endpoint_type == "audio_speech":
-        url = f"{base}/audio/speech"
-    elif endpoint_type == "audio_transcriptions":
-        url = f"{base}/audio/transcriptions"
-    else:
-        url = f"{base}/{endpoint_type}"
-    return url
-
-
-async def stream_response(
-    client: httpx.AsyncClient,
-    method: str,
-    url: str,
-    headers: dict,
-    body: dict,
-    channel: ChannelConfig,
-    model: str = "",
-    source_format: str = "openai",
-) -> AsyncGenerator[bytes, None]:
-    """
-    Stream response from upstream provider.
-    
-    Args:
-        client: HTTP client
-        method: HTTP method
-        url: Target URL
-        headers: Request headers
-        body: Request body
-        channel: Channel configuration
-        model: Model name
-        source_format: Format of the original request (openai, anthropic, gemini)
-    """
-    target_format = channel.type.lower()
-
-    try:
-        async with client.stream(
-                method,
-                url,
-                headers=headers,
-                json=body,
-                timeout=channel.timeout,
-        ) as response:
-            if response.status_code != 200:
-                error_body = await response.aread()
-                error_text = error_body.decode('utf-8', errors='replace')
-                yield f"data: {json.dumps({'error': error_text, 'status': response.status_code})}\n\n".encode(
-                )
-                yield b"data: [DONE]\n\n"
-                return
-
-            # If source format matches target format, pass through
-            if source_format == target_format:
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-                return
-
-            # Transform stream chunks from target format to source format
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        yield b"data: [DONE]\n\n"
-                        continue
-                    try:
-                        event_data = json.loads(data_str)
-                        # Transform chunk from target format to source format
-                        transformed_chunk = FormatConverter.transform_stream_chunk(
-                            event_data, ProviderType(target_format),
-                            ProviderType(source_format), model)
-                        if transformed_chunk:
-                            yield f"data: {json.dumps(transformed_chunk)}\n\n".encode(
-                            )
-                    except json.JSONDecodeError:
-                        pass
-                elif line.startswith("event: "):
-                    pass
-
-            # Gemini doesn't send [DONE], so we add it
-            if target_format == "gemini":
-                yield b"data: [DONE]\n\n"
-
-    except httpx.TimeoutException:
-        yield f"data: {json.dumps({'error': 'Upstream request timed out'})}\n\n".encode(
-        )
-        yield b"data: [DONE]\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n".encode()
-        yield b"data: [DONE]\n\n"
 
 
 class ProxyEngine:
@@ -251,6 +39,10 @@ class ProxyEngine:
         self._client: Optional[httpx.AsyncClient] = None
         self._proxy_clients: dict = {}
         self._rate_limiter_manager = RateLimiterManager()
+        # Channel 选择锁，避免高并发下的竞争条件
+        self._channel_select_lock = asyncio.Lock()
+        # 全局轮询计数器，用于负载均衡
+        self._global_round_robin = 0
 
     def update_config(self, config: AppConfig):
         self.config = config
@@ -260,7 +52,30 @@ class ProxyEngine:
         """Clear cached proxy clients to force re-creation with new settings."""
         for client in self._proxy_clients.values():
             if not client.is_closed:
-                asyncio.create_task(client.aclose())
+                try:
+                    # 尝试获取事件循环，如果失败则使用同步关闭
+                    loop = asyncio.get_running_loop()
+                    asyncio.create_task(client.aclose())
+                except RuntimeError:
+                    # 没有运行的事件循环，使用同步关闭
+                    try:
+                        import threading
+
+                        # 在新线程中运行异步关闭
+                        def close_client():
+                            try:
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                new_loop.run_until_complete(client.aclose())
+                                new_loop.close()
+                            except Exception:
+                                pass
+
+                        thread = threading.Thread(target=close_client)
+                        thread.start()
+                        thread.join(timeout=5.0)
+                    except Exception:
+                        pass
         self._proxy_clients.clear()
 
     def _get_rate_limit_config(self,
@@ -349,63 +164,130 @@ class ProxyEngine:
         Returns:
             Sorted list of channels
         """
-        healthy = []
-        unhealthy = []
+        channel_scores = []
 
-        for ch in channels:
-            if self._is_channel_healthy(ch):
-                limiter = self._rate_limiter_manager.get_limiter(ch.id)
-                load = 0
-                if limiter:
-                    load = limiter.current_limit - (
-                        limiter._semaphore._value if limiter._semaphore else 0)
-                healthy.append((ch, load))
-            else:
-                unhealthy.append(ch)
+        for channel in channels:
+            is_healthy = self._is_channel_healthy(channel)
+            limiter = self._rate_limiter_manager.get_limiter(channel.id)
+            active_requests = limiter.active_requests if limiter else 0
 
-        healthy.sort(key=lambda x: (x[0].priority, x[1]))
+            # Score: (is_healthy descending, priority ascending, load ascending)
+            score = (
+                1 if is_healthy else 0,  # Healthy channels first
+                -channel.priority,  # Higher priority (lower number) first
+                active_requests,  # Less loaded channels first
+            )
+            channel_scores.append((score, channel))
 
-        result = [ch for ch, _ in healthy]
-        result.extend(unhealthy)
+        # Sort by score (descending for health, ascending for priority and load)
+        channel_scores.sort(key=lambda x: x[0], reverse=True)
+        return [channel for _, channel in channel_scores]
 
-        return result
+    async def _select_best_channel(
+            self,
+            channels: list,
+            high_availability: bool = False) -> tuple[ChannelConfig, any]:
+        """
+        选择最佳 channel，带锁保护避免竞争条件
+
+        策略：
+        1. 使用全局轮询策略均匀分配请求
+        2. 如果当前轮询的 channel 已满，尝试下一个
+        3. 如果都满了，等待当前轮询位置的 channel
+
+        Args:
+            channels: 可用 channel 列表
+            high_availability: 是否高可用模式
+
+        Returns:
+            (选中的 channel, 对应的 limiter)
+        """
+        async with self._channel_select_lock:
+            # 过滤出健康的 channel
+            healthy_channels = [
+                ch for ch in channels if self._is_channel_healthy(ch)
+            ]
+
+            if not healthy_channels:
+                raise HTTPException(status_code=503,
+                                    detail="No available channels")
+
+            # 使用全局轮询计数器获取当前位置
+            current_idx = self._global_round_robin % len(healthy_channels)
+            self._global_round_robin += 1
+
+            # 从轮询位置开始尝试获取可用 channel
+            for i in range(len(healthy_channels)):
+                idx = (current_idx + i) % len(healthy_channels)
+                channel = healthy_channels[idx]
+                limiter = await self._get_limiter_for_channel(channel)
+                active = limiter.active_requests
+                limit = limiter.current_limit
+
+                logger.debug(
+                    f"[Channel Select] {channel.name}: active={active}, limit={limit}"
+                )
+
+                # 尝试获取许可
+                if limiter.try_acquire():
+                    logger.info(
+                        f"[Channel Select] Selected {channel.name} (active={active}, limit={limit})"
+                    )
+                    return channel, limiter
+
+            # 所有 channel 都满了，等待当前轮询位置的 channel
+            best_channel = healthy_channels[current_idx]
+            best_limiter = await self._get_limiter_for_channel(best_channel)
+            logger.info(
+                f"[Channel Select] All channels full, waiting for {best_channel.name}"
+            )
+            await best_limiter.acquire()
+            return best_channel, best_limiter
 
     async def get_client(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client with connection pooling."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=10.0,  # 连接超时
+                    read=self.config.settings.default_timeout,  # 读取超时
+                    write=10.0,  # 写入超时
+                    pool=5.0,  # 连接池获取超时
+                ),
                 follow_redirects=True,
-                timeout=httpx.Timeout(120.0),
-                limits=httpx.Limits(max_connections=100,
-                                    max_keepalive_connections=20),
+                limits=httpx.Limits(
+                    max_connections=100,  # 最大连接数
+                    max_keepalive_connections=20,  # 最大保持连接数
+                    keepalive_expiry=30.0,  # 连接保持时间
+                ),
+                http2=True,  # 启用 HTTP/2
             )
         return self._client
 
     async def get_proxy_client(self, proxy_url: str) -> httpx.AsyncClient:
-        """
-        Get or create an HTTP client with proxy support.
-        
-        Args:
-            proxy_url: Proxy URL (e.g., http://127.0.0.1:7890, socks5://127.0.0.1:1080)
-            
-        Returns:
-            httpx.AsyncClient configured with the specified proxy
-        """
-        if proxy_url in self._proxy_clients:
-            client = self._proxy_clients[proxy_url]
-            if not client.is_closed:
-                return client
-
-        client = httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=httpx.Timeout(120.0),
-            limits=httpx.Limits(max_connections=100,
-                                max_keepalive_connections=20),
-            proxy=proxy_url,
-        )
-        self._proxy_clients[proxy_url] = client
-        return client
+        """Get or create an HTTP client with proxy configuration."""
+        if proxy_url not in self._proxy_clients or self._proxy_clients[
+                proxy_url].is_closed:
+            self._proxy_clients[proxy_url] = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=10.0,
+                    read=self.config.settings.default_timeout,
+                    write=10.0,
+                    pool=5.0,
+                ),
+                follow_redirects=True,
+                proxy=proxy_url,
+                limits=httpx.Limits(
+                    max_connections=100,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=30.0,
+                ),
+                http2=True,
+            )
+        return self._proxy_clients[proxy_url]
 
     async def close(self):
+        """Close all HTTP clients."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         for client in self._proxy_clients.values():
@@ -422,7 +304,7 @@ class ProxyEngine:
     ) -> Union[StreamingResponse, JSONResponse]:
         """
         Proxy a request to upstream channels.
-        
+
         Args:
             request: FastAPI request object
             endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
@@ -500,38 +382,129 @@ class ProxyEngine:
                     status_code=503,
                     detail=f"No available channels for model '{model}'")
 
-        # Sort channels by health status for load balancing
-        channels = self._get_healthy_channels(channels, high_availability)
+        # 使用带锁的 channel 选择策略
+        # 优先选择有可用槽位的 channel，避免竞争条件
+        channel, limiter = await self._select_best_channel(
+            channels, high_availability)
 
-        # Try channels in priority order with fallback
+        try:
+            return await self._forward_to_channel(request, channel,
+                                                  endpoint_type, body,
+                                                  source_format,
+                                                  high_availability, limiter)
+        except HTTPException as e:
+            if e.status_code in (401, 403):
+                limiter.release()
+                raise
+
+            # 如果允许 fallback，尝试其他 channel
+            if self.config.settings.enable_fallback:
+                logger.warning(
+                    f"Channel {channel.name} failed: {e.detail}, trying fallback..."
+                )
+                limiter.release()
+                return await self._try_fallback_channels(
+                    request, channels, channel, endpoint_type, body,
+                    source_format, high_availability)
+            else:
+                limiter.release()
+                raise
+        except Exception as e:
+            limiter.release()
+            raise HTTPException(status_code=502, detail=str(e))
+
+    async def _try_fallback_channels(
+        self,
+        request: Request,
+        channels: list,
+        failed_channel: ChannelConfig,
+        endpoint_type: str,
+        body: dict,
+        source_format: str,
+        high_availability: bool,
+    ):
+        """
+        尝试其他 channel 作为 fallback
+        """
         last_error = None
+
         for channel in channels:
+            if channel.id == failed_channel.id:
+                continue
+
+            limiter = await self._get_limiter_for_channel(channel)
+            await limiter.acquire()
+
             try:
                 return await self._forward_to_channel(request, channel,
                                                       endpoint_type, body,
                                                       source_format,
-                                                      high_availability)
+                                                      high_availability,
+                                                      limiter)
             except HTTPException as e:
                 if e.status_code in (401, 403):
-                    raise  # Don't retry auth errors
-                last_error = e
-                if not self.config.settings.enable_fallback:
+                    limiter.release()
                     raise
+                last_error = e
                 logger.warning(
-                    f"Channel {channel.name} failed: {e.detail}, trying next..."
+                    f"Fallback channel {channel.name} failed: {e.detail}, trying next..."
                 )
+                limiter.release()
                 continue
             except Exception as e:
                 last_error = e
-                if not self.config.settings.enable_fallback:
-                    raise HTTPException(status_code=502, detail=str(e))
                 logger.warning(
-                    f"Channel {channel.name} error: {e}, trying next...")
+                    f"Fallback channel {channel.name} error: {e}, trying next..."
+                )
+                limiter.release()
                 continue
 
-        # All channels failed
         raise last_error or HTTPException(
             status_code=503, detail="All upstream channels failed")
+
+    async def _create_provider(
+        self,
+        channel: ChannelConfig,
+        request: Request,
+        source_format: str,
+    ):
+        """
+        创建对应的 ChannelProvider
+        
+        Args:
+            channel: Channel配置
+            request: FastAPI请求对象
+            source_format: 源格式
+            
+        Returns:
+            ChannelProvider实例
+        """
+        target_format = channel.type.lower()
+
+        if target_format == "builtin":
+            # 内置Provider
+            provider_name = channel.base_url.lower()
+            provider_map = {
+                "glm": GLMChannelProvider,
+                "kimi": KimiChannelProvider,
+                "deepseek": DeepSeekChannelProvider,
+                "qwen": QwenChannelProvider,
+                "minimax": MiniMaxChannelProvider,
+            }
+
+            provider_class = provider_map.get(provider_name)
+            if not provider_class:
+                raise ValueError(f"Unknown builtin provider: {provider_name}")
+
+            return provider_class(channel)
+        else:
+            # HTTP Provider
+            if channel.proxy_enabled and channel.proxy_url:
+                client = await self.get_proxy_client(channel.proxy_url)
+            else:
+                client = await self.get_client()
+
+            return HTTPChannelProvider(channel, client, source_format)
 
     async def _forward_to_channel(
         self,
@@ -539,63 +512,47 @@ class ProxyEngine:
         channel: ChannelConfig,
         endpoint_type: str,
         body: dict,
-        source_format: str = "openai",
-        high_availability: bool = False,
+        source_format: str,
+        high_availability: bool,
+        limiter,
     ) -> Union[StreamingResponse, JSONResponse]:
         """
-        Forward request to a specific channel with rate limiting.
-        
-        Args:
-            request: FastAPI request object
-            channel: Target channel configuration
-            endpoint_type: Type of endpoint (chat, embeddings, models, etc.)
-            body: Request body
-            source_format: Format of the incoming request (openai, anthropic, gemini)
-            high_availability: Whether high availability mode is enabled
-        """
-        target_format = channel.type.lower()
+        统一的 channel 转发入口（带外部 limiter）
 
-        # In high availability mode, replace model with channel's supported model
+        使用 ChannelProvider 统一接口处理所有 channel 类型
+        limiter 已在外部获取，本方法只负责释放
+        """
+        # 高可用模式替换模型
         if high_availability and channel.models:
-            # Use the first model from channel's model list
-            replacement_model = channel.models[0]
-            body = dict(body)  # Create a copy to avoid modifying original
-            body["model"] = replacement_model
+            body = dict(body)  # 创建副本
+            body["model"] = channel.models[0]
             logger.info(
-                f"High availability mode: replaced model with '{replacement_model}' for channel '{channel.name}'"
+                f"High availability mode: replaced model with '{channel.models[0]}' for channel '{channel.name}'"
             )
 
-        # Transform request body from source format to target format
-        upstream_body, model, extra_info = FormatConverter.transform_request(
-            body, ProviderType(source_format), ProviderType(target_format))
-        is_streaming = extra_info.get("is_stream", body.get("stream", False))
+        # 创建Provider
+        provider = await self._create_provider(channel, request, source_format)
 
-        # Build upstream URL based on channel type and endpoint
-        url = get_upstream_url(channel, model, is_streaming, endpoint_type)
-
-        # Build headers
-        headers = build_upstream_headers(channel, dict(request.headers))
-
-        # Get appropriate client (with or without proxy)
-        if channel.proxy_enabled and channel.proxy_url:
-            client = await self.get_proxy_client(channel.proxy_url)
-        else:
-            client = await self.get_client()
-
-        # Get rate limiter for this channel
-        limiter = await self._get_limiter_for_channel(channel)
-
-        # Acquire rate limit slot
-        await limiter.acquire()
         start_time = time.time()
         is_error = False
         status_code = 200
 
+        # 从 body 获取 stream 参数
+        is_stream = body.get("stream", False)
+
         try:
-            if is_streaming:
-                return StreamingResponse(self._stream_with_rate_limit(
-                    client, "POST", url, headers, upstream_body, channel,
-                    model, source_format, limiter, start_time),
+            # 统一调用接口，直接传入 body 字典
+            result = await provider.chat_completion(
+                request=body,
+                api_key=channel.api_key,
+                source_format=source_format,
+                original_headers=dict(request.headers),
+            )
+
+            if is_stream:
+                # 流式响应
+                return StreamingResponse(self._wrap_stream(
+                    result, limiter, start_time),
                                          media_type="text/event-stream",
                                          headers={
                                              "Cache-Control": "no-cache",
@@ -603,155 +560,48 @@ class ProxyEngine:
                                              "Connection": "keep-alive",
                                          })
             else:
-                try:
-                    response = await client.post(
-                        url,
-                        headers=headers,
-                        json=upstream_body,
-                        timeout=channel.timeout,
-                    )
+                # 非流式响应 - result 已经是原始格式的字典
+                status_code = 200
+                return JSONResponse(content=result, status_code=200)
 
-                    status_code = response.status_code
-                    is_error = status_code != 200
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        # Transform response from target format back to source format
-                        transformed = FormatConverter.transform_response(
-                            data, ProviderType(target_format),
-                            ProviderType(source_format), model)
-                        return JSONResponse(content=transformed,
-                                            status_code=200)
-                    else:
-                        error_detail = f"Upstream returned {response.status_code}"
-                        try:
-                            err_data = response.json()
-                            if "error" in err_data:
-                                error_detail = err_data["error"].get(
-                                    "message", error_detail)
-                        except Exception:
-                            pass
-                        raise HTTPException(status_code=response.status_code,
-                                            detail=error_detail)
-
-                except httpx.TimeoutException:
-                    is_error = True
-                    status_code = 504
-                    raise HTTPException(
-                        status_code=504,
-                        detail=f"Channel '{channel.name}' timed out")
-                except httpx.RequestError as e:
-                    is_error = True
-                    status_code = 502
-                    raise HTTPException(
-                        status_code=502,
-                        detail=
-                        f"Channel '{channel.name}' connection error: {str(e)}")
+        except Exception as e:
+            is_error = True
+            status_code = 502
+            logger.error(f"Channel {channel.name} error: {e}")
+            raise HTTPException(status_code=502, detail=str(e))
         finally:
-            # Record request metrics
-            response_time = time.time() - start_time
-            limiter.record_request(response_time, is_error, status_code)
-            limiter.release()
+            # 非流式在这里释放，流式在生成器中释放
+            if not is_stream:
+                response_time = time.time() - start_time
+                limiter.record_request(response_time, is_error, status_code)
+                limiter.release()
 
-    async def _stream_with_rate_limit(
+    async def _wrap_stream(
         self,
-        client: httpx.AsyncClient,
-        method: str,
-        url: str,
-        headers: dict,
-        body: dict,
-        channel: ChannelConfig,
-        model: str,
-        source_format: str,
+        stream_generator: AsyncGenerator[dict, None],
         limiter,
         start_time: float,
     ) -> AsyncGenerator[bytes, None]:
-        """
-        Stream response from upstream provider with rate limit tracking.
-        
-        Args:
-            client: HTTP client
-            method: HTTP method
-            url: Target URL
-            headers: Request headers
-            body: Request body
-            channel: Channel configuration
-            model: Model name
-            source_format: Format of the original request
-            limiter: Rate limiter instance
-            start_time: Request start time
-        """
-        target_format = channel.type.lower()
+        """统一包装流式响应 - 直接返回原始格式的字典"""
         is_error = False
         status_code = 200
 
         try:
-            async with client.stream(
-                    method,
-                    url,
-                    headers=headers,
-                    json=body,
-                    timeout=channel.timeout,
-            ) as response:
-                status_code = response.status_code
-                is_error = status_code != 200
-
-                if response.status_code != 200:
-                    error_body = await response.aread()
-                    error_text = error_body.decode('utf-8', errors='replace')
-                    yield f"data: {json.dumps({'error': error_text, 'status': response.status_code})}\n\n".encode(
-                    )
-                    yield b"data: [DONE]\n\n"
-                    return
-
-                # If source format matches target format, pass through
-                if source_format == target_format:
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                    return
-
-                # Transform stream chunks from target format to source format
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str == "[DONE]":
-                            yield b"data: [DONE]\n\n"
-                            continue
-                        try:
-                            event_data = json.loads(data_str)
-                            # Transform chunk from target format to source format
-                            transformed_chunk = FormatConverter.transform_stream_chunk(
-                                event_data, ProviderType(target_format),
-                                ProviderType(source_format), model)
-                            if transformed_chunk:
-                                yield f"data: {json.dumps(transformed_chunk)}\n\n".encode(
-                                )
-                        except json.JSONDecodeError:
-                            pass
-                    elif line.startswith("event: "):
-                        pass
-
-                # Gemini doesn't send [DONE], so we add it
-                if target_format == "gemini":
-                    yield b"data: [DONE]\n\n"
-
-        except httpx.TimeoutException:
-            is_error = True
-            status_code = 504
-            yield f"data: {json.dumps({'error': 'Upstream request timed out'})}\n\n".encode(
-            )
+            async for chunk in stream_generator:
+                # chunk 已经是原始格式的字典，直接序列化
+                yield f"data: {json.dumps(chunk)}\n\n".encode()
             yield b"data: [DONE]\n\n"
+
         except Exception as e:
             is_error = True
             status_code = 500
+            logger.error(f"Streaming error: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n".encode()
             yield b"data: [DONE]\n\n"
         finally:
-            # Record request metrics for streaming
             response_time = time.time() - start_time
             limiter.record_request(response_time, is_error, status_code)
+            limiter.release()
 
     async def list_models(self, token_key: Optional[str] = None) -> dict:
         """List all available models across all enabled channels"""
