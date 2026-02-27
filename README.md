@@ -451,11 +451,11 @@ curl "http://localhost:3000/v1beta/models/gemini-pro:generateContent" \
 
 本项目接口逆向 Python 客户端基于 [xiaoY233](https://github.com/xiaoY233) 的以下项目：
 
-- [GLM-Free-API](https://github.com/xiaoY233/GLM-Free-API.git) - 智谱清言接口逆向 Python 客户端
-- [DeepSeek-Free-API](https://github.com/xiaoY233/DeepSeek-Free-API.git) - DeepSeek 接口逆向 Python 客户端
-- [MiniMax-Free-API](https://github.com/xiaoY233/MiniMax-Free-API.git) - MiniMax 接口逆向 Python 客户端
-- [Qwen-Free-API](https://github.com/xiaoY233/Qwen-Free-API.git) - Qwen 接口逆向 Python 客户端
-- [Kimi-Free-API](https://github.com/xiaoY233/Kimi-Free-API.git) - Kimi 接口逆向 Python 客户端
+- [GLM-Free-API](https://github.com/xiaoY233/GLM-Free-API.git) - 智谱清言接口逆向
+- [DeepSeek-Free-API](https://github.com/xiaoY233/DeepSeek-Free-API.git) - DeepSeek 接口逆向
+- [MiniMax-Free-API](https://github.com/xiaoY233/MiniMax-Free-API.git) - MiniMax 接口逆向
+- [Qwen-Free-API](https://github.com/xiaoY233/Qwen-Free-API.git) - Qwen 接口逆向
+- [Kimi-Free-API](https://github.com/xiaoY233/Kimi-Free-API.git) - Kimi 接口逆向
 
 ---
 

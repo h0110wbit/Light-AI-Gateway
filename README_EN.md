@@ -452,11 +452,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 The reverse-engineered Python clients in this project are based on the following projects by [xiaoY233](https://github.com/xiaoY233):
 
-- [GLM-Free-API](https://github.com/xiaoY233/GLM-Free-API.git) - Zhipu GLM reverse-engineered Python client
-- [DeepSeek-Free-API](https://github.com/xiaoY233/DeepSeek-Free-API.git) - DeepSeek reverse-engineered Python client
-- [MiniMax-Free-API](https://github.com/xiaoY233/MiniMax-Free-API.git) - MiniMax reverse-engineered Python client
-- [Qwen-Free-API](https://github.com/xiaoY233/Qwen-Free-API.git) - Qwen reverse-engineered Python client
-- [Kimi-Free-API](https://github.com/xiaoY233/Kimi-Free-API.git) - Kimi reverse-engineered Python client
+- [GLM-Free-API](https://github.com/xiaoY233/GLM-Free-API.git) - Zhipu GLM reverse engineering
+- [DeepSeek-Free-API](https://github.com/xiaoY233/DeepSeek-Free-API.git) - DeepSeek reverse engineering
+- [MiniMax-Free-API](https://github.com/xiaoY233/MiniMax-Free-API.git) - MiniMax reverse engineering
+- [Qwen-Free-API](https://github.com/xiaoY233/Qwen-Free-API.git) - Qwen reverse engineering
+- [Kimi-Free-API](https://github.com/xiaoY233/Kimi-Free-API.git) - Kimi reverse engineering
 
 ---
 
